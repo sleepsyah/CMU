@@ -1,63 +1,75 @@
 # Implementation Status
 
-## Completed
+## Current Summary
 
-- Initialized the workspace as a git repository.
-- Read the linked PRD and Spec tabs from the Google Doc.
-- Built an Astro + React Chrome Manifest V3 side-panel extension prototype.
-- Implemented active-page extraction through a content script.
-- Implemented article and Congress.gov bill classification.
-- Implemented local evidence-backed article analysis:
-  - summary
-  - main issue
-  - possible framing
-  - loaded language examples
-  - quoted people or groups
-  - included and missing perspectives
-  - confidence labels
-- Implemented local evidence-backed bill analysis:
-  - plain-language summary
-  - proposed changes
-  - affected groups
-  - sourced supporters and opponents only when present in extracted text
-  - unclear impacts
-  - important terms
-  - confidence labels
-- Implemented low-confidence warning, error, loading, empty, manual paste, save, history, delete, evidence, and anonymous feedback states.
-- Implemented local saved history capped at 50 analyses.
-- Implemented local anonymous feedback logs.
-- Fixed Chrome unpacked-extension loading by moving Astro-generated assets out of the reserved `_astro` directory and removing inline Astro island hydration from the side-panel page.
-- Tightened active-page extraction so likely home/index pages do not fall back to noisy full-page body text.
-- Tightened bill classification so `S.7`-style page fragments do not classify normal news pages as Congress.gov bills.
-- Added an unsupported-page failure path with a clear manual-paste fallback.
-- Compacted the Chrome side-panel UI, removed the redundant empty card, and moved Save/New analysis actions into the top result card.
-- Filtered generic labels such as supporters, critics, and opponents out of sourced-supporter/opponent output unless a named source is present.
+Unframed is a working local MVP Chrome side-panel extension. It can analyze extracted or pasted article/bill text, show evidence and confidence, save local history, and record anonymous local feedback.
 
-## Known Gaps
+The MVP is not production-complete. It does not yet have LLM-backed analysis, Supabase persistence, Congress.gov API integration, or external source validation.
 
-- The MVP uses a local heuristic analyzer because no LLM API key, serverless backend, or Supabase credentials are present.
-- Feedback and analysis logs are local only. Supabase tables can be added when project credentials exist.
-- Congress.gov extraction works through page text and URL patterns, not the Congress.gov API.
+## PRD / Spec Status
+
+| Requirement | Status | Notes |
+| --- | --- | --- |
+| Chrome Manifest V3 extension | Done | Built in `dist/` with `manifest.json`, background script, content script, and side-panel page. |
+| Chrome side-panel UI | Done | Opens as `sidepanel/index.html`; UI is compact for side-panel width. |
+| No login required | Done | No account or auth flow exists. |
+| Analyze current page | Done for MVP | Content script extracts readable text from supported pages. Likely home/index pages are rejected instead of analyzed. |
+| Manual paste fallback | Done | Users can paste article or bill text when extraction fails. |
+| Article analysis | Done locally | Shows summary, main issue, framing, loaded language, quoted sources, included perspectives, missing perspectives, evidence, and confidence. |
+| Congress.gov bill analysis | Done locally | Shows plain-language summary, proposed changes, affected groups, sourced supporters/opponents, unclear impacts, important terms, evidence, and confidence. |
+| Evidence for major claims | Partial | Evidence is tied to extracted/pasted text. External source validation is not implemented. |
+| Confidence labels | Done | Analysis and evidence include confidence scores/labels. |
+| Low-confidence warning | Done | Low-confidence results show a warning. |
+| Unsupported claims removed or uncertain | Partial | Heuristics avoid unsupported supporter/opponent claims and show uncertainty, but no LLM validation exists. |
+| Save history locally | Done | Saves up to 50 analyses in local extension storage. |
+| Delete saved analyses | Done | History items can be deleted. |
+| Anonymous feedback | Done locally | Helpful, Confusing, Incorrect, Biased, plus optional comment are stored locally. |
+| Supabase feedback/log storage | Not done | Waiting on project credentials and backend setup. |
+| LLM structured JSON analysis | Not done | Current analyzer is heuristic/local. |
+| Congress.gov API | Not done | Current bill support uses extracted or pasted page text. |
+| Outlet/context databases | Not done | No external outlet-bias/context database is connected. |
+| External civic/fact-check sources | Not done | No external citation lookup or validation is connected. |
+
+## Completed Work
+
+- Initialized git.
+- Read the linked PRD and Spec tabs.
+- Built the Astro + React extension shell.
+- Implemented active-page extraction.
+- Implemented article/bill classification.
+- Added unsupported-page handling for noisy home/index pages.
+- Implemented article and bill result views.
+- Implemented evidence, confidence, warnings, loading, errors, empty states, manual paste, save, history, delete, feedback, and reset flow.
+- Fixed Chrome extension packaging issues:
+  - no reserved `_astro` folder
+  - no inline side-panel script/style
+- Tightened classification so fragments like `S.7` do not turn normal news pages into bills.
+- Filtered generic labels like “supporters” and “critics” out of sourced supporter/opponent claims unless a named source is present.
 
 ## Verification
 
-- Passed:
-  - `npm run lint`
-  - `npm run typecheck`
-  - `npm run build`
-  - `npm audit --omit=dev` after upgrading Astro, with 0 vulnerabilities reported
-- Manual UI checks:
-  - Opened `/sidepanel/` in the in-app browser.
-  - Verified the manual paste path for a Congress.gov-style bill sample.
-  - Verified the rendered side-panel layout at 420px wide with no horizontal overflow.
-  - Verified `dist/` contains no files or directories starting with `_`.
-  - Verified side-panel HTML has no inline `<script>` or `<style>` tags.
-  - Verified manual article analysis at 360px side-panel width.
-  - Verified New analysis reset flow at 360px side-panel width.
-  - Verified manual Congress.gov-style bill analysis at 360px side-panel width.
+Passed:
+
+```sh
+npm run lint
+npm run typecheck
+npm run build
+npm audit --omit=dev
+```
+
+Manual checks completed:
+
+- Side-panel UI at 360px width.
+- Manual news article analysis.
+- Manual Congress.gov-style bill analysis.
+- New analysis reset flow.
+- Built `dist/` contains no `_`-prefixed files/folders.
+- Built side-panel HTML has no inline `<script>` or `<style>`.
 
 ## Next Steps
 
-- Add a serverless `/api/analyze` endpoint when LLM credentials are available.
-- Add Supabase feedback and analysis-log persistence when credentials are available.
-- Add fixture-based analyzer tests if the heuristic layer grows.
+1. Add a real LLM analysis endpoint with structured JSON output.
+2. Add Supabase tables for feedback and analysis logs.
+3. Add Congress.gov API support for bill metadata/text.
+4. Add external citation/context source validation.
+5. Add fixture tests for article extraction, bill classification, and analyzer output.
