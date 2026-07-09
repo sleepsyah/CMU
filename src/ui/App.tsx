@@ -116,14 +116,15 @@ function MetricRow({ title, metric }: { title: string; metric: BiasMetric }) {
   const score = assessed ? Math.round(metric.score as number) : null;
   const strength = score === null ? "No direct cues found" : score < 34 ? "Low detected signal" : score < 67 ? "Moderate detected signal" : "High detected signal";
   const evidenceLabel = metric.evidenceCount === 1 ? "1 cited passage" : `${metric.evidenceCount} cited passages`;
+  const tone = score === null ? "neutral" : score < 34 ? "low" : score < 67 ? "moderate" : "high";
 
   return (
     <div className="metric-row">
       <div>
         <span className="metric-name">{title}</span>
-        <span className="metric-detail">{strength}{score === null ? "" : ` · ${evidenceLabel}`}</span>
+        <span className={`metric-detail is-${tone}`}>{strength}{score === null ? "" : ` · ${evidenceLabel}`}</span>
       </div>
-      <span className="metric-score">{score === null ? "Not assessed" : `${score} / 100`}</span>
+      <span className={`metric-score is-${tone}`}>{score === null ? "Not assessed" : `${score} / 100`}</span>
     </div>
   );
 }
@@ -589,11 +590,14 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <span className="brand-name">unframed</span>
+        <span className="brand-lockup">
+          <img className="brand-icon" src="/icons/unframed-32.png" alt="" aria-hidden="true" />
+          <span className="brand-name">Unframed</span>
+        </span>
         <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze page</button>
       </header>
       <div className="content">
-        <nav className="tabs" role="tablist" aria-label="unframed sections">
+        <nav className="tabs" role="tablist" aria-label="Unframed sections">
           {tabs.map((tab) => (
             <button id={`tab-${tab.id}`} key={tab.id} className={`tab-button ${activeTab === tab.id ? "is-active" : ""}`} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={`panel-${tab.id}`} tabIndex={activeTab === tab.id ? 0 : -1} onKeyDown={(event) => moveTab(event, tab.id)} onClick={() => { setActiveTab(tab.id); setNotice(null); }}>{tab.icon}{tab.label}</button>
           ))}

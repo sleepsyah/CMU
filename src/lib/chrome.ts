@@ -30,9 +30,9 @@ export async function extractActivePage(): Promise<ExtractedPage> {
       response = await chrome.tabs.sendMessage(tab.id, { type: "UNFRAMED_EXTRACT_PAGE" });
     } catch {
       if (!siteAccessPattern(tab.url || "")) {
-        throw new Error("unframed cannot read browser settings, extension pages, or other protected pages. Open a normal article or use Manual Paste.");
+        throw new Error("Unframed cannot read browser settings, extension pages, or other protected pages. Open a normal article or use Manual Paste.");
       }
-      throw new Error("This site blocked article extraction. Reload the page once after updating unframed, then try again or use Manual Paste.");
+      throw new Error("This site blocked article extraction. Reload the page once after updating Unframed, then try again or use Manual Paste.");
     }
   }
   if (!response?.ok) {

@@ -190,7 +190,7 @@ function buildBiasEvidence(analysis: Analysis, assessment: BackendBiasAnalysis):
       ? "Local heuristics were combined with a model running on this computer."
       : "Only evidence-linked heuristics running in the extension were used.",
     sourceUrl: null,
-    sourceLabel: "unframed method note",
+    sourceLabel: "Unframed method note",
     kind: "analysis_note",
     explanation: "Scores estimate the strength of detected cues. A low score or an unassessed dimension does not prove neutrality, accuracy, or fair representation.",
     confidenceScore: 70,

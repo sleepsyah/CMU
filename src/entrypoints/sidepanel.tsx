@@ -4,7 +4,7 @@ import App from "../ui/App";
 const root = document.getElementById("root");
 
 if (!root) {
-  throw new Error("unframed side panel root was not found.");
+  throw new Error("Unframed side panel root was not found.");
 }
 
 createRoot(root).render(<App />);

@@ -88,6 +88,20 @@ a:focus-visible {
   background: var(--bg);
 }
 
+.brand-lockup {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.brand-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  object-fit: contain;
+}
+
 .brand-name {
   font-size: 15px;
   font-weight: 600;
@@ -368,6 +382,7 @@ a:focus-visible {
 .metric-detail {
   color: var(--muted);
   font-size: 11px;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -375,8 +390,29 @@ a:focus-visible {
   flex: 0 0 auto;
   color: #3d3d39;
   font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.metric-detail.is-low,
+.metric-score.is-low {
+  color: var(--good);
+}
+
+.metric-detail.is-moderate,
+.metric-score.is-moderate {
+  color: var(--warn);
+}
+
+.metric-detail.is-high,
+.metric-score.is-high {
+  color: var(--bad);
+}
+
+.metric-score.is-neutral {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .key-findings {

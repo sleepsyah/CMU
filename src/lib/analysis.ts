@@ -78,7 +78,7 @@ export function cleanDisplayTitle(text: string) {
     .trim();
 
   const billPrefix = /^((?:H\.R\.|S\.|H\.Res\.|S\.Res\.)\s*\d+)\s*[-–—]\s*\d+(?:st|nd|rd|th)\s+Congress\s*\(\d{4}\s*[-–—]\s*\d{4}\)\s*:?\s*/i;
-  title = title.replace(billPrefix, "$1 — ");
+  title = title.replace(billPrefix, "$1 - ");
   if (/^(?:H\.R\.|S\.|H\.Res\.|S\.Res\.)\s*\d+/i.test(title)) {
     title = title.replace(/\s+\d+(?:st|nd|rd|th)\s+Congress\s*\(\d{4}\s*[-–—]\s*\d{4}\)(?:\s*\|.*)?$/i, "");
   }
@@ -163,7 +163,7 @@ function addAnalysisNote(items: EvidenceItem[], page: ExtractedPage, claim: stri
     confidenceScore: 35,
     kind: "analysis_note",
     sourceUrl: null,
-    sourceLabel: "unframed analysis note"
+    sourceLabel: "Unframed analysis note"
   });
 }
 

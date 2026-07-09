@@ -116,7 +116,7 @@ describe("bill analysis", () => {
       "The proposal would direct the Department of Agriculture to update program rules and implementation guidance."
     ].join("\n\n");
 
-    expect(cleanDisplayTitle(rawTitle)).toBe("S.629 — Emergency Conservation Program Improvement Act of 2025");
+    expect(cleanDisplayTitle(rawTitle)).toBe("S.629 - Emergency Conservation Program Improvement Act of 2025");
     expect(cleanReadableSourceText(rawText)).not.toMatch(/Array|\[actionDate\]|=>/);
 
     const analysis = analyzePage(page({
@@ -126,7 +126,7 @@ describe("bill analysis", () => {
       text: rawText
     }));
 
-    expect(analysis.pageTitle).toBe("S.629 — Emergency Conservation Program Improvement Act of 2025");
+    expect(analysis.pageTitle).toBe("S.629 - Emergency Conservation Program Improvement Act of 2025");
     expect(analysis.summary).toContain("farmers affected by natural disasters");
     expect(analysis.summary).not.toMatch(/Array|\[actionDate\]|=>|Get alerts/);
     expect(analysis.evidence.map((item) => item.supportingText).join(" ")).not.toMatch(/Array|\[actionDate\]|=>/);
