@@ -1,0 +1,4 @@
+# Local transformer classifiers for the model-backed Tier 1 pipeline.
+
+transformers==4.48.0
+torch==2.5.1

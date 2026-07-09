@@ -1,0 +1,6 @@
+# Optional dependency parser stack for target-dependent sentiment analysis.
+
+spacy==3.8.3
+
+# After installing, run:
+# python -m spacy download en_core_web_sm

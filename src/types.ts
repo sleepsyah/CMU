@@ -33,6 +33,34 @@ export interface AnalysisFinding {
   confidenceLabel: ConfidenceLabel;
 }
 
+export interface BiasMetric {
+  score: number;
+  confidence: number;
+}
+
+export interface TargetDependentAsymmetry {
+  target: string;
+  associated_verbs: string[];
+}
+
+export interface BackendBiasAnalysis {
+  scores: {
+    political_bias: BiasMetric;
+    gender_bias: BiasMetric;
+    ethnicity_bias: BiasMetric;
+  };
+  linguistic_evidence: {
+    spin_words_detected: string[];
+    target_dependent_asymmetries: TargetDependentAsymmetry[];
+    counterfactual_sentiment_delta: number;
+  };
+  contextual_analysis: {
+    missing_perspectives: string[];
+    stereotypical_associations: string[];
+  };
+  source: "hybrid-backend" | "local-fallback";
+}
+
 export interface BaseAnalysis {
   id: string;
   url: string;
@@ -47,6 +75,7 @@ export interface BaseAnalysis {
   summaryEvidenceIds: string[];
   createdAt: string;
   evidence: EvidenceItem[];
+  backendBias?: BackendBiasAnalysis;
 }
 
 export interface ArticleAnalysis extends BaseAnalysis {

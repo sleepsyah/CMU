@@ -10,10 +10,11 @@ import {
 } from "@phosphor-icons/react";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { analyzePage, classifyPastedText, confidenceLabel } from "../lib/analysis";
+import { classifyPastedText, confidenceLabel } from "../lib/analysis";
+import { analyzePageWithBackend } from "../lib/backend";
 import { createManualPage, extractActivePage } from "../lib/chrome";
 import { clearFeedbackLogs, clearSavedAnalyses, deleteSavedAnalysis, getSavedAnalyses, logFeedback, saveAnalysis } from "../lib/storage";
-import type { Analysis, AnalysisFinding, BillAnalysis, ContentType, FeedbackType, SavedAnalysis } from "../types";
+import type { Analysis, AnalysisFinding, BackendBiasAnalysis, BiasMetric, BillAnalysis, ContentType, FeedbackType, SavedAnalysis } from "../types";
 
 type Tab = "analysis" | "evidence" | "history" | "feedback";
 
@@ -143,8 +144,135 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
         </div>
       </section>
 
+      <BiasMetricsPanel backendBias={analysis.backendBias} />
+
       {isBill ? <BillDetails analysis={analysis as BillAnalysis} /> : <ArticleDetails analysis={analysis} />}
     </>
+  );
+}
+
+function scoreClass(score: number) {
+  if (score < 35) return "low";
+  if (score < 68) return "medium";
+  return "high";
+}
+
+function scoreLabel(score: number) {
+  if (score < 35) return "Low skew";
+  if (score < 68) return "Moderate skew";
+  return "High skew";
+}
+
+function BiasMetricsPanel({ backendBias }: { backendBias?: BackendBiasAnalysis }) {
+  if (!backendBias) {
+    return (
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2 className="panel-title">Bias Detection Meters</h2>
+            <p className="panel-description">Run an analysis to generate political, gender, and ethnicity bias scores.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const contextFlags = [
+    ...backendBias.contextual_analysis.missing_perspectives,
+    ...backendBias.contextual_analysis.stereotypical_associations
+  ].slice(0, 3);
+
+  return (
+    <section className="panel bias-panel">
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">Bias Detection Meters</h2>
+          <p className="panel-description">
+            1 is neutral/fact-driven. 100 is highly skewed.
+          </p>
+        </div>
+        <span className="badge">{backendBias.source === "hybrid-backend" ? "Hybrid backend" : "Local fallback"}</span>
+      </div>
+      <div className="panel-body">
+        <div className="bias-meter-grid">
+          <BiasMeter
+            title="Political Bias"
+            metric={backendBias.scores.political_bias}
+            modelNote={
+              backendBias.source === "hybrid-backend"
+                ? "BABE RoBERTa lexical-bias classifier plus spin-word and narrative parity signals."
+                : "Local fallback estimates loaded political wording from extracted text."
+            }
+          />
+          <BiasMeter
+            title="Gender Bias"
+            metric={backendBias.scores.gender_bias}
+            modelNote={
+              backendBias.source === "hybrid-backend"
+                ? "Counterfactual gender-token sentiment, gendered-language checks, and optional WinoBias/WinoGender coreference hook."
+                : "Local fallback checks gendered descriptors and stereotype wording."
+            }
+          />
+          <BiasMeter
+            title="Ethnicity Bias"
+            metric={backendBias.scores.ethnicity_bias}
+            modelNote={
+              backendBias.source === "hybrid-backend"
+                ? "Ethnicity-token counterfactual sentiment, identity-hostility toxicity, and negative association framing."
+                : "Local fallback checks identity terms paired with hostile or negative framing."
+            }
+          />
+        </div>
+        <div className="bias-evidence">
+          <div>
+            <span className="item-title">Model evidence</span>
+            <p className="item-copy">
+              {backendBias.linguistic_evidence.spin_words_detected.length
+                ? `Spin words: ${backendBias.linguistic_evidence.spin_words_detected.slice(0, 8).join(", ")}.`
+                : "No high-weight spin words detected."}
+            </p>
+            <p className="item-copy">
+              Counterfactual sentiment delta: {backendBias.linguistic_evidence.counterfactual_sentiment_delta.toFixed(2)}
+            </p>
+          </div>
+          {contextFlags.length > 0 && (
+            <ul className="compact-list">
+              {contextFlags.map((flag) => (
+                <li key={flag}>{flag}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BiasMeter({ title, metric, modelNote }: { title: string; metric: BiasMetric; modelNote: string }) {
+  const clampedScore = Math.max(1, Math.min(100, Math.round(metric.score)));
+  const className = scoreClass(clampedScore);
+
+  return (
+    <article className={`bias-meter ${className}`}>
+      <div className="meter-head">
+        <div>
+          <span className="item-title">{title}</span>
+          <p className="meter-note">{modelNote}</p>
+        </div>
+        <span className="meter-confidence">{Math.round(metric.confidence * 100)}%</span>
+      </div>
+      <div className="meter-score-row">
+        <strong>{clampedScore}</strong>
+        <span>{scoreLabel(clampedScore)}</span>
+      </div>
+      <div className="meter-bar" aria-label={`${title} score ${clampedScore} out of 100`}>
+        <div className="meter-fill" style={{ width: `${clampedScore}%` }} />
+      </div>
+      <div className="meter-scale" aria-hidden="true">
+        <span>1 neutral</span>
+        <span>100 skewed</span>
+      </div>
+    </article>
   );
 }
 
@@ -329,7 +457,13 @@ function FeedbackView({ analysis }: { analysis: Analysis | null }) {
   );
 }
 
-function ManualFallback({ onAnalyze }: { onAnalyze: (text: string, type: ContentType, metadata: { title?: string; url?: string; sourceName?: string }) => void }) {
+function ManualFallback({
+  onAnalyze,
+  loading
+}: {
+  onAnalyze: (text: string, type: ContentType, metadata: { title?: string; url?: string; sourceName?: string }) => void;
+  loading: boolean;
+}) {
   const [text, setText] = useState("");
   const [type, setType] = useState<ContentType>("unknown");
   const [title, setTitle] = useState("");
@@ -357,7 +491,11 @@ function ManualFallback({ onAnalyze }: { onAnalyze: (text: string, type: Content
             <div className="field"><label htmlFor="manual-text">Article or bill text</label><textarea id="manual-text" value={text} onChange={(event) => setText(event.target.value)} /><p className="helper">Paste at least 120 characters. The full pasted text is analyzed in memory and is not saved unless you save the resulting analysis.</p></div>
           </div>
         </div>
-        <div className="panel-footer"><button className="secondary-button" type="submit" disabled={!canAnalyze}>Analyze pasted text</button></div>
+        <div className="panel-footer">
+          <button className="secondary-button" type="submit" disabled={!canAnalyze || loading}>
+            {loading ? "Analyzing..." : "Analyze pasted text"}
+          </button>
+        </div>
       </form>
       <section className="privacy-note" aria-label="Privacy summary">
         <strong>Private by default</strong>
@@ -382,16 +520,26 @@ export default function App() {
     try {
       const page = await extractActivePage();
       if (page.text.trim().length < 120) throw new Error("The extracted text was too short. Paste article or bill text manually.");
-      setAnalysis(analyzePage(page)); setActiveTab("analysis");
+      const next = await analyzePageWithBackend(page);
+      setAnalysis(next);
+      setActiveTab("analysis");
     } catch (event) {
       setError(event instanceof Error ? event.message : "Analysis failed.");
     } finally { setLoading(false); }
   }
 
-  function runManualAnalysis(text: string, type: ContentType, metadata: { title?: string; url?: string; sourceName?: string }) {
+  async function runManualAnalysis(text: string, type: ContentType, metadata: { title?: string; url?: string; sourceName?: string }) {
+    setLoading(true);
     setError(null); setNotice(null);
-    try { setAnalysis(analyzePage(createManualPage(text, type, metadata))); setActiveTab("analysis"); }
-    catch (event) { setError(event instanceof Error ? event.message : "Analysis failed."); }
+    try {
+      const next = await analyzePageWithBackend(createManualPage(text, type, metadata));
+      setAnalysis(next);
+      setActiveTab("analysis");
+    } catch (event) {
+      setError(event instanceof Error ? event.message : "Analysis failed.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function saveCurrentAnalysis() {
@@ -451,7 +599,13 @@ export default function App() {
         {notice && <div className="notice-panel" role="status">{notice}</div>}
         {loading ? <LoadingState /> : (
           <section id={`panel-${activeTab}`} role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
-            {activeTab === "analysis" && (analysis ? <AnalysisView analysis={analysis} onSaveAnalysis={saveCurrentAnalysis} onNewAnalysis={() => { setAnalysis(null); setError(null); setNotice(null); }} /> : <ManualFallback onAnalyze={runManualAnalysis} />)}
+            {activeTab === "analysis" && (
+              analysis ? (
+                <AnalysisView analysis={analysis} onSaveAnalysis={saveCurrentAnalysis} onNewAnalysis={() => { setAnalysis(null); setError(null); setNotice(null); }} />
+              ) : (
+                <ManualFallback onAnalyze={runManualAnalysis} loading={loading} />
+              )
+            )}
             {activeTab === "evidence" && <EvidenceView analysis={analysis} />}
             {activeTab === "history" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setActiveTab("analysis"); }} onDelete={removeSaved} onClear={clearHistory} />}
             {activeTab === "feedback" && <FeedbackView analysis={analysis} />}

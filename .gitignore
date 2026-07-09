@@ -4,6 +4,8 @@ dist/
 *.crx
 *.pem
 .astro/
+.venv/
+backend/.venv/
 .env
 .env.*
 !.env.example
