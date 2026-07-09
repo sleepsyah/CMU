@@ -353,7 +353,7 @@ function ManualFallback({ onAnalyze }: { onAnalyze: (text: string, type: Content
             <div className="field"><label htmlFor="content-type">Content type</label><select id="content-type" value={type} onChange={(event) => setType(event.target.value as ContentType)}><option value="unknown">Detect from text</option><option value="article">News article</option><option value="bill">Congress.gov bill</option></select><p className="helper">Current guess: {contentLabel(inferredType)}.</p></div>
             <div className="field"><label htmlFor="manual-title">Source title <span className="optional">optional</span></label><input id="manual-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
             <div className="field"><label htmlFor="manual-source">Source or outlet <span className="optional">optional</span></label><input id="manual-source" value={sourceName} onChange={(event) => setSourceName(event.target.value)} /></div>
-            <div className="field"><label htmlFor="manual-url">Source URL <span className="optional">optional</span></label><input id="manual-url" inputMode="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-describedby="manual-url-help" /><p className={`helper ${validUrl ? "" : "field-error"}`} id="manual-url-help">{validUrl ? "Used for source links and saved history." : "Enter a full http:// or https:// URL."}</p></div>
+            <div className="field"><label htmlFor="manual-url">Source URL <span className="optional">optional; does not fetch text</span></label><input id="manual-url" inputMode="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-describedby="manual-url-help" /><p className={`helper ${validUrl ? "" : "field-error"}`} id="manual-url-help">{validUrl ? "Used only for citations and saved history. Paste the article or bill text below." : "Enter a full http:// or https:// URL."}</p></div>
             <div className="field"><label htmlFor="manual-text">Article or bill text</label><textarea id="manual-text" value={text} onChange={(event) => setText(event.target.value)} /><p className="helper">Paste at least 120 characters. The full pasted text is analyzed in memory and is not saved unless you save the resulting analysis.</p></div>
           </div>
         </div>
@@ -361,7 +361,7 @@ function ManualFallback({ onAnalyze }: { onAnalyze: (text: string, type: Content
       </form>
       <section className="privacy-note" aria-label="Privacy summary">
         <strong>Private by default</strong>
-        <p>Analysis runs locally. Only analyses you explicitly save and feedback you explicitly record are kept in extension storage. No data is sent to a server.</p>
+        <p>Analysis runs locally. Page access is used only when you press Analyze. Saved analyses and feedback stay in extension storage; no data is sent to a server.</p>
       </section>
     </>
   );

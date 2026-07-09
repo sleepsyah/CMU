@@ -13,7 +13,7 @@ The MVP is not production-complete. It does not yet have LLM-backed analysis, Su
 | Chrome Manifest V3 extension | Done | Built in `dist/` with `manifest.json`, background script, content script, and side-panel page. |
 | Chrome side-panel UI | Done | Opens as `sidepanel/index.html`; UI is compact for side-panel width. |
 | No login required | Done | No account or auth flow exists. |
-| Analyze current page | Done for local MVP | The content script is injected on demand into the active page; broad all-site host permission is not requested. |
+| Analyze current page | Done for local MVP | The extension declares HTTP/HTTPS host access for reliable cross-site navigation, but injects the content script only when the user presses Analyze. |
 | Manual paste fallback | Done | Users can paste article or bill text when extraction fails. |
 | Article analysis | Done locally | Shows summary, main issue, framing prompts, potentially loaded language, attributed sources, included perspectives, perspectives to check, evidence, and confidence. |
 | Congress.gov bill analysis | Done locally | Shows summary, main issue, proposed changes, potentially affected groups, directly attributed supporters/opponents, unclear impacts, sourced terms, evidence, and confidence. |
@@ -43,7 +43,7 @@ The MVP is not production-complete. It does not yet have LLM-backed analysis, Su
 - Added the required bill main-issue section and claim-level confidence presentation.
 - Added optional title, source, and URL fields for manual paste.
 - Added storage success/error states, clear-history controls, and a privacy summary.
-- Replaced broad all-site host permission with active-page, on-demand script injection.
+- Limited host access to HTTP/HTTPS pages and kept content-script injection user-triggered so analysis remains reliable after cross-site navigation.
 - Added regression tests for attribution, negation, affected-group detection, evidence links, and classification.
 - Fixed Chrome extension packaging issues:
   - no reserved `_astro` folder
