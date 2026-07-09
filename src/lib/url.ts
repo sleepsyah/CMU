@@ -65,14 +65,14 @@ export function extractPageFromHtml(html: string, url: string): ExtractedPage {
   const blocks: string[] = [];
   const seen = new Set<string>();
   clone.querySelectorAll("h1, h2, p, li, blockquote").forEach((node) => {
-    const text = cleanInline(node.textContent || "");
+    const text = cleanReadableBlock(node.textContent || "");
     const key = text.toLowerCase();
     if (text.length < 35 || countWords(text) < 7 || seen.has(key) || isNoise(text)) return;
     seen.add(key);
     blocks.push(text);
   });
 
-  const text = (blocks.length >= 2 ? blocks.join("\n\n") : cleanInline(clone.textContent || "")).slice(0, 30_000);
+  const text = (blocks.length >= 2 ? blocks.join("\n\n") : cleanReadableText(clone.textContent || "")).slice(0, 30_000);
   if (text.length < 120) throw new Error("The link did not expose enough readable text. Open the page in a tab or paste the text instead.");
 
   const parsedUrl = new URL(url);
@@ -106,6 +106,21 @@ function meta(document: Document, selector: string) {
 
 function cleanInline(value: string) {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanReadableBlock(value: string) {
+  const text = cleanInline(value);
+  const machineMarker = text.search(/(?:\bArray\s*\(\s*(?:\[[^\]]+\]\s*=>)?|\[(?:actionDate|displayText|externalActionCode|description|chamberOfAction|type|text)\]\s*=>|\b(?:Introduced|Passed(?:\/agreed to)?|Became Law|Committee)Array\s*\()/i);
+  const readable = machineMarker >= 0 ? text.slice(0, machineMarker) : text;
+  return readable.replace(/\s*\|?\s*Get alerts\s*$/i, "").trim();
+}
+
+function cleanReadableText(value: string) {
+  return value
+    .split(/\r?\n+/)
+    .map(cleanReadableBlock)
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function countWords(value: string) {

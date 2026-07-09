@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzePage, classifyPastedText, keyFindingsFor } from "./analysis";
+import { analyzePage, classifyPastedText, cleanDisplayTitle, cleanReadableSourceText, keyFindingsFor } from "./analysis";
 import type { AnalysisFinding, ExtractedPage } from "../types";
 
 function page(overrides: Partial<ExtractedPage>): ExtractedPage {
@@ -106,6 +106,30 @@ describe("bill analysis", () => {
     expect(groups).not.toContain("students");
     expect(groups).not.toContain("workers");
     expect(analysis.mainIssue.evidenceIds.length).toBeGreaterThan(0);
+  });
+
+  it("removes serialized Congress.gov fields from titles and displayed analysis text", () => {
+    const rawTitle = "S.629 - 119th Congress (2025-2026): Emergency Conservation Program Improvement Act of 2025 | Congress.gov";
+    const rawText = [
+      "S.629 - Emergency Conservation Program Improvement Act of 2025 119th Congress (2025-2026) | Get alerts IntroducedArray ( [actionDate] => 2025-02-19 [displayText] => Introduced in Senate )",
+      "The bill would improve the Emergency Conservation Program for farmers affected by natural disasters.",
+      "The proposal would direct the Department of Agriculture to update program rules and implementation guidance."
+    ].join("\n\n");
+
+    expect(cleanDisplayTitle(rawTitle)).toBe("S.629 — Emergency Conservation Program Improvement Act of 2025");
+    expect(cleanReadableSourceText(rawText)).not.toMatch(/Array|\[actionDate\]|=>/);
+
+    const analysis = analyzePage(page({
+      title: rawTitle,
+      url: "https://www.congress.gov/bill/119th-congress/senate-bill/629",
+      contentType: "bill",
+      text: rawText
+    }));
+
+    expect(analysis.pageTitle).toBe("S.629 — Emergency Conservation Program Improvement Act of 2025");
+    expect(analysis.summary).toContain("farmers affected by natural disasters");
+    expect(analysis.summary).not.toMatch(/Array|\[actionDate\]|=>|Get alerts/);
+    expect(analysis.evidence.map((item) => item.supportingText).join(" ")).not.toMatch(/Array|\[actionDate\]|=>/);
   });
 });
 

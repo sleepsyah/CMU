@@ -4,7 +4,7 @@ import {
   FloppyDisk,
   Info,
   LinkSimple,
-  Sparkle,
+  MagnifyingGlass,
   Trash,
   WarningCircle
 } from "@phosphor-icons/react";
@@ -38,12 +38,6 @@ import type {
 type Tab = "analysis" | "saved" | "details";
 
 const feedbackTypes: FeedbackType[] = ["Helpful", "Confusing", "Incorrect", "Biased"];
-
-function confidenceClass(score: number) {
-  if (score >= 75) return "good";
-  if (score >= 50) return "warn";
-  return "bad";
-}
 
 function contentLabel(type: ContentType) {
   if (type === "bill") return "Congress.gov bill";
@@ -120,18 +114,16 @@ function LoadingState() {
 function MetricRow({ title, metric }: { title: string; metric: BiasMetric }) {
   const assessed = metric.status === "assessed" && metric.score !== null;
   const score = assessed ? Math.round(metric.score as number) : null;
-  const strength = score === null ? "Not enough evidence" : score < 34 ? "Low detected signal" : score < 67 ? "Moderate detected signal" : "High detected signal";
+  const strength = score === null ? "No direct cues found" : score < 34 ? "Low detected signal" : score < 67 ? "Moderate detected signal" : "High detected signal";
+  const evidenceLabel = metric.evidenceCount === 1 ? "1 cited passage" : `${metric.evidenceCount} cited passages`;
 
   return (
     <div className="metric-row">
       <div>
-        <strong>{title}</strong>
-        <p>{strength}</p>
+        <span className="metric-name">{title}</span>
+        <span className="metric-detail">{strength}{score === null ? "" : ` · ${evidenceLabel}`}</span>
       </div>
-      <div className="metric-value">
-        <strong>{score === null ? "Not assessed" : `${score}/100`}</strong>
-        <span>{metric.evidenceCount || 0} evidence {metric.evidenceCount === 1 ? "item" : "items"}</span>
-      </div>
+      <span className="metric-score">{score === null ? "Not assessed" : `${score} / 100`}</span>
     </div>
   );
 }
@@ -142,7 +134,7 @@ function BiasSummary({ assessment }: { assessment?: BackendBiasAnalysis }) {
     <section className="surface result-section">
       <div className="section-heading">
         <h2>Bias signals</h2>
-        <p>Separate scales for detected wording and framing cues. They do not rate factuality or prove neutrality.</p>
+        <p>Direct wording cues by category. These scores do not rate factual accuracy.</p>
       </div>
       <div className="metric-list">
         <MetricRow title="Political" metric={assessment.scores.political_bias} />
@@ -174,9 +166,9 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
               <span>{analysis.sourceName}</span>
               <span>{contentLabel(analysis.contentType)}</span>
               {analysis.contentType === "article" && <span>{genreLabel(analysis.genre || "general")}</span>}
+              <span>Confidence: {confidenceLabel(analysis.confidenceScore)}</span>
             </p>
           </div>
-          <span className={`confidence-text ${confidenceClass(analysis.confidenceScore)}`}>{confidenceLabel(analysis.confidenceScore)} confidence</span>
         </div>
         <p className="summary">{analysis.summary}</p>
         <div className="source-actions">
@@ -191,7 +183,7 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
       <section className="surface result-section">
         <div className="section-heading">
           <h2>What to notice</h2>
-          <p>The three most useful checks from this source.</p>
+          <p>Up to three evidence-linked prompts from this source.</p>
         </div>
         {keyFindings.length ? (
           <ol className="key-findings">
@@ -458,7 +450,7 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
       <div className="start-primary">
         <h1>Understand what you are reading</h1>
         <p>Get three evidence-linked checks for a news article or Congress.gov bill.</p>
-        <button className="primary-button full-button" type="button" onClick={onAnalyzePage} disabled={loading}><Sparkle size={17} /> Analyze current page</button>
+        <button className="primary-button full-button" type="button" onClick={onAnalyzePage} disabled={loading}><MagnifyingGlass size={16} /> Analyze current page</button>
       </div>
 
       <form className="url-form" onSubmit={submitUrl}>
@@ -598,7 +590,7 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <span className="brand-name">unframed</span>
-        <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><Sparkle size={16} /> Analyze page</button>
+        <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze page</button>
       </header>
       <div className="content">
         <nav className="tabs" role="tablist" aria-label="unframed sections">

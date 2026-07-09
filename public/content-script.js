@@ -52,6 +52,21 @@ function isNoisyBlock(text) {
   return /^(advertisement|subscribe|log in|sign up|create account|listen to this article|share full article|skip to content|live updates?)$/i.test(text);
 }
 
+function cleanReadableBlock(text) {
+  const value = cleanInline(text);
+  const machineMarker = value.search(/(?:\bArray\s*\(\s*(?:\[[^\]]+\]\s*=>)?|\[(?:actionDate|displayText|externalActionCode|description|chamberOfAction|type|text)\]\s*=>|\b(?:Introduced|Passed(?:\/agreed to)?|Became Law|Committee)Array\s*\()/i);
+  const readable = machineMarker >= 0 ? value.slice(0, machineMarker) : value;
+  return readable.replace(/\s*\|?\s*Get alerts\s*$/i, "").trim();
+}
+
+function cleanReadableText(text) {
+  return String(text || "")
+    .split(/\r?\n+/)
+    .map(cleanReadableBlock)
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function isUsefulBlock(text) {
   const value = cleanInline(text);
   const words = countWords(value);
@@ -73,7 +88,7 @@ function collectReadableBlocks(root) {
   const blockNodes = cloned.querySelectorAll("h1, h2, p, li, blockquote, [data-testid*='paragraph'], [class*='paragraph']");
 
   for (const node of blockNodes) {
-    const text = cleanInline(node.innerText || node.textContent || "");
+    const text = cleanReadableBlock(node.innerText || node.textContent || "");
     const key = text.toLowerCase();
     if (!isUsefulBlock(text) || seen.has(key)) continue;
     seen.add(key);
@@ -81,7 +96,7 @@ function collectReadableBlocks(root) {
   }
 
   if (blocks.length >= 2) return blocks.join("\n\n");
-  return cleanInline(cloned.innerText || cloned.textContent || "");
+  return cleanReadableText(cloned.innerText || cloned.textContent || "");
 }
 
 function linkDensity(element, text) {

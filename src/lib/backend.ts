@@ -1,4 +1,4 @@
-import { analyzePage, confidenceLabel } from "./analysis";
+import { analyzePage, cleanReadableSourceText, confidenceLabel } from "./analysis";
 import type {
   Analysis,
   BackendBiasAnalysis,
@@ -100,14 +100,15 @@ const ethnicityGroups = ["black", "white", "asian", "latino", "latina", "hispani
 const hostileTerms = ["criminal", "criminals", "gang", "gangs", "violent", "terrorist", "terrorists", "lazy", "threat", "threats", "illegal", "invasion", "unqualified"];
 
 export async function analyzePageWithBackend(page: ExtractedPage): Promise<Analysis> {
+  const readableText = cleanReadableSourceText(page.text);
   const localAnalysis = analyzePage(page);
-  const localAssessment = localBiasAssessment(page.text);
+  const localAssessment = localBiasAssessment(readableText);
   const localBackendUrl = isLoopbackBackendUrl(configuredBackendUrl) ? configuredBackendUrl : "";
 
   if (!localBackendUrl) return attachBiasAssessment(localAnalysis, localAssessment);
 
   try {
-    const backendPayload = await fetchBackendBias(localBackendUrl, page.text);
+    const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
     return attachBiasAssessment(localAnalysis, mergeWithLocalBackend(localAssessment, backendPayload));
   } catch {
     return attachBiasAssessment(localAnalysis, localAssessment);

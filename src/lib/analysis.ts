@@ -45,6 +45,7 @@ const TERM_GLOSSARY: Record<string, string> = {
 const GENERIC_SOURCE_NAMES = /^(supporters|opponents|critics|advocates|officials|experts|researchers|lawmakers|people|residents|students|workers)$/i;
 const NAME_PART = "[A-Z][A-Za-z&.'’–-]+";
 const NAMED_ACTOR = `${NAME_PART}(?:\\s+(?:(?:of|the|and|for|in|on)\\s+)?${NAME_PART}){0,6}`;
+const MACHINE_SERIALIZATION = /(?:\bArray\s*\(\s*(?:\[[^\]]+\]\s*=>)?|\[(?:actionDate|displayText|externalActionCode|description|chamberOfAction|type|text)\]\s*=>|\b(?:Introduced|Passed(?:\/agreed to)?|Became Law|Committee)Array\s*\()/i;
 
 function makeId(prefix: string) {
   const random = Math.random().toString(36).slice(2, 8);
@@ -55,11 +56,41 @@ function normalizeWhitespace(text: string) {
   return text.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function cleanReadableBlock(text: string) {
+  const value = normalizeWhitespace(text);
+  const marker = value.search(MACHINE_SERIALIZATION);
+  const readable = marker >= 0 ? value.slice(0, marker) : value;
+  return readable.replace(/\s*\|?\s*Get alerts\s*$/i, "").trim();
+}
+
+export function cleanReadableSourceText(text: string) {
+  return text
+    .split(/\r?\n+/)
+    .map(cleanReadableBlock)
+    .filter((block) => block.length > 0 && !MACHINE_SERIALIZATION.test(block) && !/\[[A-Za-z][^\]]{0,40}\]\s*=>/.test(block))
+    .join("\n\n")
+    .trim();
+}
+
+export function cleanDisplayTitle(text: string) {
+  let title = cleanReadableBlock(text)
+    .replace(/\s+\|\s+(?:Congress\.gov|Library of Congress).*$/i, "")
+    .trim();
+
+  const billPrefix = /^((?:H\.R\.|S\.|H\.Res\.|S\.Res\.)\s*\d+)\s*[-–—]\s*\d+(?:st|nd|rd|th)\s+Congress\s*\(\d{4}\s*[-–—]\s*\d{4}\)\s*:?\s*/i;
+  title = title.replace(billPrefix, "$1 — ");
+  if (/^(?:H\.R\.|S\.|H\.Res\.|S\.Res\.)\s*\d+/i.test(title)) {
+    title = title.replace(/\s+\d+(?:st|nd|rd|th)\s+Congress\s*\(\d{4}\s*[-–—]\s*\d{4}\)(?:\s*\|.*)?$/i, "");
+  }
+  return title || "Untitled source";
+}
+
 function splitSentences(text: string) {
-  return normalizeWhitespace(text)
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
+  return cleanReadableSourceText(text)
+    .split(/\n{2,}/)
+    .flatMap((block) => normalizeWhitespace(block).split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/))
     .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length > 24)
+    .filter((sentence) => sentence.length > 24 && !MACHINE_SERIALIZATION.test(sentence) && !/\[[A-Za-z][^\]]{0,40}\]\s*=>/.test(sentence))
     .slice(0, 120);
 }
 
@@ -136,8 +167,18 @@ function addAnalysisNote(items: EvidenceItem[], page: ExtractedPage, claim: stri
   });
 }
 
-function firstUsefulSentences(sentences: string[], count: number) {
-  return sentences.filter((sentence) => !/cookie|subscribe|advertisement|newsletter/i.test(sentence)).slice(0, count);
+function comparableText(value: string) {
+  return cleanDisplayTitle(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function firstUsefulSentences(page: ExtractedPage, sentences: string[], count: number) {
+  const title = comparableText(page.title);
+  const useful = sentences.filter((sentence) => !/cookie|subscribe|advertisement|newsletter/i.test(sentence));
+  const withoutTitle = useful.filter((sentence) => {
+    const candidate = comparableText(sentence);
+    return candidate.length < 20 || title.length < 20 || (!candidate.includes(title) && !title.includes(candidate));
+  });
+  return (withoutTitle.length ? withoutTitle : useful).slice(0, count);
 }
 
 function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
@@ -158,7 +199,7 @@ function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
 }
 
 function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
-  const summarySentences = firstUsefulSentences(sentences, 2);
+  const summarySentences = firstUsefulSentences(page, sentences, 2);
   if (!summarySentences.length) return { summary: "The extracted text was not complete enough to summarize.", evidenceIds: [] };
   const evidenceIds = summarySentences.map((sentence) =>
     addEvidence(evidenceItems, page, {
@@ -174,7 +215,7 @@ function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sen
 }
 
 function mainIssueFinding(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
-  const sentence = firstUsefulSentences(sentences, 1)[0];
+  const sentence = firstUsefulSentences(page, sentences, 1)[0];
   if (!sentence) {
     const noteId = addAnalysisNote(
       evidenceItems,
@@ -590,11 +631,12 @@ export function classifyPastedText(text: string, url = ""): ContentType {
 }
 
 export function analyzePage(page: ExtractedPage): Analysis {
-  const contentType = page.contentType === "unknown" ? classifyPastedText(page.text, page.url) : page.contentType;
-  if (contentType === "unsupported" || !page.text.trim()) {
+  const readableText = cleanReadableSourceText(page.text);
+  const contentType = page.contentType === "unknown" ? classifyPastedText(readableText, page.url) : page.contentType;
+  if (contentType === "unsupported" || !readableText) {
     throw new Error("This page does not look like a supported article or Congress.gov bill. Open a specific story or bill, or paste the text manually.");
   }
-  const normalizedPage = { ...page, contentType };
+  const normalizedPage = { ...page, title: cleanDisplayTitle(page.title), text: readableText, contentType };
   return contentType === "bill" ? analyzeBill(normalizedPage) : analyzeArticle({ ...normalizedPage, contentType: "article" });
 }
 
