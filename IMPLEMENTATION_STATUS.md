@@ -1,59 +1,58 @@
 # unframed implementation status
 
-## Current Summary
+## Current product
 
-unframed is a working local MVP Chrome side-panel extension. It can analyze extracted or pasted article/bill text, connect displayed findings to labeled evidence, show calibrated uncertainty, save local history, and record anonymous local feedback.
+unframed is a working local-first Chrome side-panel MVP for a roughly 20-second review of English news articles and Congress.gov bills.
 
-The MVP is not production-complete. It does not yet have LLM-backed analysis, Supabase persistence, Congress.gov API integration, or external source validation.
+The primary result contains:
 
-## PRD / Spec Status
+- one short source summary;
+- separate political, gender, and ethnicity cue scales;
+- at most three evidence-linked observations or review questions;
+- save and source actions.
 
-| Requirement | Status | Notes |
-| --- | --- | --- |
-| Chrome Manifest V3 extension | Done | Built in `dist/` with `manifest.json`, background script, content script, and side-panel page. |
-| Chrome side-panel UI | Done | Opens as `sidepanel/index.html`; UI is compact for side-panel width. |
-| No login required | Done | No account or auth flow exists. |
-| Analyze current page | Done for local MVP | The extension declares HTTP/HTTPS host access for reliable cross-site navigation, but injects the content script only when the user presses Analyze. |
-| Manual paste fallback | Done | Users can paste article or bill text when extraction fails. |
-| Article analysis | Done locally | Shows summary, main issue, framing prompts, potentially loaded language, attributed sources, included perspectives, perspectives to check, evidence, and confidence. |
-| Congress.gov bill analysis | Done locally | Shows summary, main issue, proposed changes, potentially affected groups, directly attributed supporters/opponents, unclear impacts, sourced terms, evidence, and confidence. |
-| Evidence for displayed findings | Done locally | Findings carry evidence IDs. Evidence is labeled as source text, outside context, or analysis note. Independent external validation is not implemented. |
-| Confidence labels | Done locally | Overall, finding, and evidence confidence are shown. Local heuristic overall confidence is capped below High. |
-| Low-confidence warning | Done | Overall warnings and claim-level low-confidence styling are present. |
-| Unsupported claims removed or uncertain | Improved locally | Negation and attribution regressions are tested; missing perspectives are phrased as questions, not confirmed omissions. LLM/external validation is still absent. |
-| Save history locally | Done | Saves up to 50 analyses in local extension storage. |
-| Delete saved analyses | Done | History items can be deleted. |
-| Anonymous feedback | Done locally | Helpful, Confusing, Incorrect, Biased, plus optional comment are stored locally and explicitly described as not submitted to the team. |
-| Supabase feedback/log storage | Not done | Waiting on project credentials and backend setup. |
-| LLM structured JSON analysis | Not done | Current analyzer is heuristic/local. |
-| Congress.gov API | Not done | Current bill support uses extracted or pasted page text. |
-| Outlet/context databases | Not done | No external outlet-bias/context database is connected. |
-| External civic/fact-check sources | Not done | No external citation lookup or validation is connected. |
+Full evidence, parser notes, method confidence, and feedback are kept in the secondary Details tab. Saved history remains a primary tab and is capped at 50 local items.
 
-## Completed Work
+## Implemented
 
-- Initialized git.
-- Read the linked PRD and Spec tabs.
-- Built the Astro + React extension shell.
-- Implemented active-page extraction.
-- Implemented article/bill classification.
-- Added unsupported-page handling for noisy home/index pages.
-- Implemented article and bill result views.
-- Linked displayed findings to labeled evidence and separated source text, outside context, and parser notes.
-- Added the required bill main-issue section and claim-level confidence presentation.
-- Added optional title, source, and URL fields for manual paste.
-- Added storage success/error states, clear-history controls, and a privacy summary.
-- Limited host access to HTTP/HTTPS pages and kept content-script injection user-triggered so analysis remains reliable after cross-site navigation.
-- Added regression tests for attribution, negation, affected-group detection, evidence links, and classification.
-- Fixed Chrome extension packaging issues:
-  - no reserved `_astro` folder
-  - no inline side-panel script/style
-- Tightened classification so fragments like `S.7` do not turn normal news pages into bills.
-- Filtered generic labels like “supporters” and “critics” out of sourced supporter/opponent claims unless a named source is present.
+- Chrome Manifest V3 side panel with active-page extraction.
+- Direct public-link fetching with omitted credentials and no referrer.
+- Compact manual-paste fallback with optional source metadata.
+- Article and federal bill classification.
+- Genre-aware article review questions.
+- Evidence-conditioned political, gender, and ethnicity scales.
+- Direct same-sentence and non-negation requirements for demographic cues.
+- “Not assessed” states instead of synthetic baseline scores.
+- Short source-text evidence and explicit analysis-note separation.
+- Local save, open, delete, clear, and 50-item history cap.
+- Local feedback retained inside Details rather than as a top-level feature.
+- Optional loopback-only FastAPI model helper.
+- Sentence-level BABE classifier use and event-loop-safe local model execution.
+- No remote LLM analysis path.
+
+## Privacy boundary
+
+- No login or user profile.
+- Active-page extraction runs only after Analyze.
+- Link fetching contacts only the supplied page and omits browser credentials.
+- Full article or bill text is not stored in history.
+- The frontend rejects remote model-helper URLs.
+- Feedback remains local and is explicitly not presented as submitted to the team.
+- No unrelated browsing history is collected.
+
+## Current limits
+
+- Scale weights are interpretable prototype weights, not calibrated probabilities.
+- Gender and ethnicity scales detect direct textual associations; they do not measure corpus-level representation from one article.
+- No cross-document comparison, image analysis, outlet profiling, Congress.gov API, or external factual validation.
+- Link extraction cannot bypass paywalls, login, bot protection, or client-only rendering.
+- State legislation is outside the current source boundary.
+- Backend dependencies and model downloads remain an optional separate setup.
+- A team feedback endpoint is not configured.
 
 ## Verification
 
-Passed:
+Automated checks:
 
 ```sh
 npm run lint
@@ -61,21 +60,23 @@ npm run typecheck
 npm test
 npm run build
 npm audit --omit=dev
+python3 -m compileall -q backend/app
 ```
 
-Manual checks completed:
+Manual regression coverage:
 
-- Side-panel UI at 360px width.
-- Manual news article analysis.
-- Manual Congress.gov-style bill analysis.
-- New analysis reset flow.
-- Built `dist/` contains no `_`-prefixed files/folders.
-- Built side-panel HTML has no inline `<script>` or `<style>`.
+- 320 px and 360 px width without horizontal overflow.
+- Neutral crime-report hard negative produces no ethnicity score.
+- Direct political, gender, and ethnicity cue evidence.
+- Genre-aware article questions.
+- Compact federal bill result.
+- Active-page, link, and paste entry paths.
+- Details separation, saved history, and local feedback controls.
 
-## Next Steps
+## Before public release
 
-1. Add a guarded LLM analysis endpoint with schema validation and the same evidence-linked shape.
-2. Add an opt-in, privacy-preserving feedback and metrics endpoint if the product team confirms the telemetry scope.
-3. Add Congress.gov API support for complete bill metadata and text.
-4. Add cited outlet/civic context with explicit source-versus-outside-context separation.
-5. Expand extraction fixtures with real saved pages and add extension-level Chrome tests.
+1. Complete the validation plan in `docs/methodology.md` and publish per-genre error rates.
+2. Add saved-page extraction fixtures and extension-level Chrome tests for supported sites.
+3. Test fresh-install permissions and side-panel behavior across navigation.
+4. Decide whether feedback is in scope; if it is, add an explicit opt-in endpoint that never receives article text.
+5. Add official Congress.gov structured data without expanding the primary result.

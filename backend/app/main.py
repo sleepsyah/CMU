@@ -8,7 +8,7 @@ from .model_registry import ModelRegistry
 from .pipeline import analyze_text_bias
 from .schemas import BiasAnalysisRequest, BiasAnalysisResponse
 
-app = FastAPI(title="Unframed Bias Pipeline", version="0.1.0")
+app = FastAPI(title="Unframed Bias Pipeline", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,

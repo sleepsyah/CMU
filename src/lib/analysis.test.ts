@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzePage, classifyPastedText } from "./analysis";
+import { analyzePage, classifyPastedText, keyFindingsFor } from "./analysis";
 import type { AnalysisFinding, ExtractedPage } from "../types";
 
 function page(overrides: Partial<ExtractedPage>): ExtractedPage {
@@ -57,6 +57,32 @@ describe("article analysis", () => {
     ];
     expect(ids.length).toBeGreaterThan(0);
     expect(ids.every((id) => knownIds.has(id))).toBe(true);
+  });
+
+  it("uses genre-aware review questions instead of default supporter and opponent prompts", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Annual transit data report",
+        text:
+          "The annual report analyzes transit delays using a sample of 4,200 trips and explains its methodology and limitations. Independent university researchers said the findings were consistent with earlier studies. The report describes longer delays on two bus routes and recommends collecting another year of data. City officials will review the results next month."
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.genre).toBe("data_report");
+    expect(analysis.includedPerspectives.map((item) => item.text).join(" ")).toMatch(/researchers/i);
+    expect(analysis.missingPerspectives.map((item) => item.text).join(" ")).not.toMatch(/supportive|opposing/i);
+  });
+
+  it("limits the primary reading flow to three findings", () => {
+    const analysis = analyzePage(
+      page({
+        text:
+          "The mayor blasted the radical plan as a disastrous betrayal and called the situation a crisis. According to Jordan Lee, the proposal could help renters. Critics argued that it could increase costs. Residents said the council should release the funding analysis before voting."
+      })
+    );
+
+    expect(keyFindingsFor(analysis).length).toBeLessThanOrEqual(3);
   });
 });
 

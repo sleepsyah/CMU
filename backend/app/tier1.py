@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 
@@ -41,11 +42,11 @@ class Tier1Metrics:
 async def run_tier1(raw_text: str, registry: ModelRegistry) -> Tier1Metrics:
     metrics = Tier1Metrics()
     text = raw_text.strip()
-    scan_political_tokens(text, metrics, registry)
-    extract_dependency_asymmetries(text, metrics, registry)
-    run_counterfactual_mutation(text, metrics, registry)
-    run_coref_stereotype_check(text, metrics, registry)
-    run_toxicity_filter(text, metrics, registry)
+    await asyncio.to_thread(scan_political_tokens, text, metrics, registry)
+    await asyncio.to_thread(extract_dependency_asymmetries, text, metrics, registry)
+    await asyncio.to_thread(run_counterfactual_mutation, text, metrics, registry)
+    await asyncio.to_thread(run_coref_stereotype_check, text, metrics, registry)
+    await asyncio.to_thread(run_toxicity_filter, text, metrics, registry)
     metrics.confidence = tier1_confidence(text, registry)
     return metrics
 
@@ -58,8 +59,13 @@ def scan_political_tokens(text: str, metrics: Tier1Metrics, registry: ModelRegis
     if classifier is None:
         return
     try:
-        outputs = classifier(text[:4000])
-        metrics.political_classifier_score = classifier_score(outputs, {"1", "label_1", "biased", "bias", "lexical-bias"})
+        candidate_sentences = sentences(text, limit=40)
+        outputs = classifier(candidate_sentences, batch_size=8)
+        if candidate_sentences and isinstance(outputs, list) and len(outputs) == len(candidate_sentences):
+            scores = [classifier_score(output, {"1", "label_1", "biased", "bias", "lexical-bias"}) for output in outputs]
+            metrics.political_classifier_score = sum(scores) / len(scores)
+        else:
+            metrics.political_classifier_score = classifier_score(outputs, {"1", "label_1", "biased", "bias", "lexical-bias"})
     except Exception:
         metrics.political_classifier_score = 0.0
 
@@ -137,12 +143,24 @@ def asymmetry_delta(target_valences: dict[str, list[float]]) -> float:
 
 
 def run_counterfactual_mutation(text: str, metrics: Tier1Metrics, registry: ModelRegistry) -> None:
-    original = sentiment_score(text, registry)
-    gender_text = mutate_demographics(text, GENDER_MUTATIONS)
-    ethnicity_text = mutate_demographics(text, ETHNICITY_MUTATIONS)
-    metrics.gender_counterfactual_delta = abs(original - sentiment_score(gender_text, registry))
-    metrics.ethnicity_counterfactual_delta = abs(original - sentiment_score(ethnicity_text, registry))
+    metrics.gender_counterfactual_delta = contextual_counterfactual_delta(text, GENDER_MUTATIONS, registry)
+    metrics.ethnicity_counterfactual_delta = contextual_counterfactual_delta(text, ETHNICITY_MUTATIONS, registry)
     metrics.counterfactual_sentiment_delta = max(metrics.gender_counterfactual_delta, metrics.ethnicity_counterfactual_delta)
+
+
+def contextual_counterfactual_delta(text: str, mutations: dict[str, str], registry: ModelRegistry) -> float:
+    relevant = [
+        sentence
+        for sentence in sentences(text)
+        if any(re.search(rf"\b{re.escape(term)}\b", sentence, flags=re.I) for term in mutations)
+    ][:4]
+    if not relevant:
+        return 0.0
+    deltas = [
+        abs(sentiment_score(sentence, registry) - sentiment_score(mutate_demographics(sentence, mutations), registry))
+        for sentence in relevant
+    ]
+    return sum(deltas) / len(deltas)
 
 
 def sentiment_score(text: str, registry: ModelRegistry) -> float:
@@ -164,37 +182,57 @@ def run_coref_stereotype_check(text: str, metrics: Tier1Metrics, registry: Model
             metrics.coref_stereotype_score = classifier_score(outputs, {"biased", "stereotype", "label_1"})
         except Exception:
             metrics.coref_stereotype_score = 0.0
-    stereotype_patterns = [
-        r"\b(nurse|teacher|assistant|secretary)\b.{0,80}\b(she|her)\b",
-        r"\b(engineer|programmer|executive|surgeon|scientist)\b.{0,80}\b(he|him|his)\b",
-    ]
-    pattern_hits = sum(1 for pattern in stereotype_patterns if re.search(pattern, text, flags=re.I | re.S))
-    gendered_language_hits = sum(1 for term in GENDER_BIAS_TERMS if re.search(rf"\b{re.escape(term)}\b", text, flags=re.I))
-    metrics.gender_language_score = clamp(gendered_language_hits / 5.0, 0.0, 1.0)
-    metrics.coref_stereotype_score = max(metrics.coref_stereotype_score, clamp(pattern_hits / 2.0, 0.0, 1.0), metrics.gender_language_score)
+    gender_terms = set(GENDER_MUTATIONS)
+    contextual_hits = 0
+    for sentence in sentences(text):
+        has_group = any(re.search(rf"\b{re.escape(term)}\b", sentence, flags=re.I) for term in gender_terms)
+        has_descriptor = any(re.search(rf"\b{re.escape(term)}\b", sentence, flags=re.I) for term in GENDER_BIAS_TERMS)
+        negated = bool(re.search(r"\b(not|never|no evidence|without evidence|rejects?|denies?)\b", sentence, flags=re.I))
+        if has_group and has_descriptor and not negated:
+            contextual_hits += 1
+    metrics.gender_language_score = clamp(contextual_hits / 3.0, 0.0, 1.0)
+    metrics.coref_stereotype_score = max(metrics.coref_stereotype_score, metrics.gender_language_score)
 
 
 def run_toxicity_filter(text: str, metrics: Tier1Metrics, registry: ModelRegistry) -> None:
     classifier = registry.toxicity_classifier
-    if classifier is not None:
+    demographic_contexts = [
+        sentence for sentence in sentences(text)
+        if any(re.search(rf"\b{re.escape(term)}\b", sentence, flags=re.I) for term in DEMOGRAPHIC_TERMS)
+    ][:8]
+    if classifier is not None and demographic_contexts:
         try:
-            outputs = classifier(text[:4000])
-            metrics.toxicity_score = classifier_score(outputs, {"toxic", "toxicity", "identity_attack", "label_1"})
+            outputs = classifier(demographic_contexts, batch_size=8)
+            if isinstance(outputs, list) and len(outputs) == len(demographic_contexts):
+                scores = [classifier_score(output, {"toxic", "toxicity", "identity_attack", "label_1"}) for output in outputs]
+                metrics.toxicity_score = max(scores, default=0.0)
+            else:
+                metrics.toxicity_score = classifier_score(outputs, {"toxic", "toxicity", "identity_attack", "label_1"})
         except Exception:
             metrics.toxicity_score = 0.0
     metrics.coded_hostility_score = coded_hostility_score(text)
 
 
 def coded_hostility_score(text: str) -> float:
-    lower = text.lower()
-    demographic_mentions = sum(1 for term in DEMOGRAPHIC_TERMS if re.search(rf"\b{re.escape(term)}\b", lower))
-    negative_mentions = sum(1 for term in NEGATIVE_ASSOCIATION_TERMS if re.search(rf"\b{re.escape(term)}\b", lower))
-    if demographic_mentions == 0:
-        return 0.0
-    return clamp((negative_mentions / max(1, demographic_mentions)) / 3.0, 0.0, 1.0)
+    direct_associations = 0
+    for sentence in sentences(text):
+        if re.search(r"\b(not|never|no evidence|without evidence|rejects?|denies?)\b", sentence, flags=re.I):
+            continue
+        group = next((term for term in DEMOGRAPHIC_TERMS if re.search(rf"\b{re.escape(term)}\b", sentence, flags=re.I)), None)
+        hostile = next((term for term in NEGATIVE_ASSOCIATION_TERMS if re.search(rf"\b{re.escape(term)}\b", sentence, flags=re.I)), None)
+        if not group or not hostile:
+            continue
+        paired = re.search(
+            rf"(?:\b{re.escape(group)}\b.{{0,55}}\b{re.escape(hostile)}\b|\b{re.escape(hostile)}\b.{{0,28}}\b{re.escape(group)}\b)",
+            sentence,
+            flags=re.I,
+        )
+        if paired:
+            direct_associations += 1
+    return clamp(direct_associations / 3.0, 0.0, 1.0)
 
 
 def tier1_confidence(text: str, registry: ModelRegistry) -> float:
-    availability_bonus = sum(0.08 for available in registry.availability.values() if available)
-    length_bonus = 0.12 if token_count(text) > 250 else 0.0
-    return clamp(0.46 + availability_bonus + length_bonus, 0.35, 0.94)
+    availability_bonus = sum(0.06 for available in registry.availability.values() if available)
+    length_bonus = 0.08 if token_count(text) > 250 else 0.0
+    return clamp(0.42 + availability_bonus + length_bonus, 0.35, 0.78)

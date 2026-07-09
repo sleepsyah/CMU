@@ -1,70 +1,46 @@
 # unframed
 
-unframed is a Chrome side-panel extension prototype. It helps readers review news articles and Congress.gov bills for framing, evidence, missing perspectives, and uncertainty.
+unframed is a lightweight Chrome side-panel extension for reviewing news articles and Congress.gov bills. It gives readers a short summary, three evidence-conditioned bias scales, and at most three things to inspect more closely.
 
-## Test In Chrome
+The extension does not rate factuality or tell readers what to believe. A low score means few supported local cues were detected. It does not prove neutrality. A dimension remains **Not assessed** when the source does not contain enough direct evidence.
 
-1. Start the optional hybrid backend if you want the model-powered bias meters:
-
-```sh
-python3 -m venv backend/.venv
-source backend/.venv/bin/activate
-pip install -r backend/requirements.txt
-pip install -r backend/requirements-ml.txt
-uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
-```
-
-2. Build the extension:
+## Run and test
 
 ```sh
 npm install
 npm test
-npm run build
-```
-
-3. Open Chrome and go to `chrome://extensions`.
-4. Turn on **Developer mode**.
-5. Click **Load unpacked**.
-6. Select:
-
-```text
-/Users/sarahzhou/Documents/CMU bias detector/dist
-```
-
-7. Open a specific news article or Congress.gov bill page.
-8. Click the unframed extension icon.
-9. Click **Analyze** in the side panel.
-
-If the page cannot be extracted, paste article or bill text into **Manual Paste** and click **Analyze pasted text**.
-
-## Test After Code Changes (NON-AGENTS can ignore)
-
-Run:
-
-```sh
-npm run lint
 npm run typecheck
 npm run build
 ```
 
-Then go back to `chrome://extensions` and click the reload button on unframed.
+Load the generated `dist/` folder from `chrome://extensions` with Developer mode enabled.
 
-## What To Check
+The optional local model helper is documented in [`backend/README.md`](backend/README.md). The extension accepts only an explicit loopback HTTP endpoint, so article text cannot be configured to go to a remote backend.
 
-- News article analysis shows summary, main issue, three bias detection meters, framing prompts, potentially loaded language, attributed sources, included perspectives, perspectives to check, evidence, and confidence.
-- Bill analysis shows summary, main issue, three bias detection meters, proposed changes, potentially affected groups, directly attributed supporters/opponents, unclear impacts, sourced terms, evidence, and confidence.
-- Unsupported pages show an error and point users to Manual Paste.
-- **Save locally** stores an analysis.
-- **History** opens and deletes saved analyses.
-- **Feedback** records anonymous feedback only on the current device; it is not submitted to the team in this MVP.
-- **New analysis** resets the panel for another test.
+## Main flow
 
-## Current Limits
+1. Open a specific news article or Congress.gov bill and select **Analyze page**.
+2. Alternatively, paste a public link or source text.
+3. Review the summary, political/gender/ethnicity signal scales, and up to three evidence-linked checks.
+4. Open **Details** for the complete evidence and parser notes.
+5. Save useful results locally. History is capped at 50 items.
 
-This is an MVP prototype. Analysis is local and heuristic, and its confidence is intentionally capped below “High.” It does not yet use an LLM API, Supabase, the Congress.gov API, outlet-context databases, or external citation validation. Source-text evidence, outside context, and parser notes are labeled separately.
+Link fetching is performed directly from the extension with credentials omitted. Full source text is analyzed in memory and is not saved. Explicitly saved results contain only short evidence excerpts.
 
-The extension has access to ordinary HTTP and HTTPS pages so Analyze continues to work after navigation, but the content script is injected only when the user requests an analysis. Saved analyses and feedback stay in local extension storage. Full extracted or pasted page text is not stored unless it appears as a short evidence excerpt inside an explicitly saved analysis.
+## Supported sources
 
-The optional Source URL in Manual Paste is citation metadata only; it does not fetch article text. Paste the source text into the text field before selecting **Analyze pasted text**.
+- Specific English-language article pages with semantic article, main-content, or standard metadata markup.
+- Static public article URLs that expose readable HTML without login or paywall access.
+- Congress.gov bill pages and pasted federal bill text.
 
-The optional backend adds RoBERTa political-bias classification, counterfactual sentiment scoring, toxicity/coded-hostility filtering, dependency/coreference signals, and an optional LLM contextual audit.
+Home pages, search pages, protected browser pages, PDFs, login-only sources, client-rendered pages with no readable HTML, and state legislation are outside the current support boundary.
+
+## Method limits
+
+- Scores represent the strength of detected wording or direct framing cues, not political ideology, factuality, intent, or outlet quality.
+- Political cues include loaded language, epistemic reporting verbs, and a small set of persuasion patterns.
+- Gender and ethnicity are assessed only when a group reference is directly paired with a stereotyped or hostile description in the same non-negated sentence.
+- Questions about omitted context depend on source genre. They are questions, not confirmed omissions.
+- Cross-document comparison, image analysis, outlet profiling, and external fact retrieval are research directions, not hidden features in this MVP.
+
+See [`docs/methodology.md`](docs/methodology.md) for the research basis and validation plan.

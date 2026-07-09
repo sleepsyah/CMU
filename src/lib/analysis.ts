@@ -1,6 +1,7 @@
 import type {
   Analysis,
   AnalysisFinding,
+  ArticleGenre,
   ArticleAnalysis,
   BillAnalysis,
   ConfidenceLabel,
@@ -60,6 +61,17 @@ function splitSentences(text: string) {
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length > 24)
     .slice(0, 120);
+}
+
+export function inferArticleGenre(page: Pick<ExtractedPage, "title" | "text">): ArticleGenre {
+  const sample = `${page.title} ${page.text.slice(0, 2400)}`.toLowerCase();
+  if (/\b(opinion|editorial|commentary|op-ed|column)\b/.test(sample)) return "opinion";
+  if (/\b(investigation|investigative|records obtained|documents show|months-long)\b/.test(sample)) return "investigation";
+  const dataSignals = new Set(sample.match(/\b(study|survey|research|report|dataset|statistics|margin of error|methodology)\b/g) || []);
+  if (dataSignals.size >= 2) return "data_report";
+  if (/\b(explainer|what to know|how it works|questions and answers|frequently asked)\b/.test(sample)) return "explainer";
+  if (/\b(breaking|announced|announcement|hearing|ruling|election|protest|meeting|council reviewed)\b/.test(sample)) return "event";
+  return "general";
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -156,7 +168,9 @@ function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sen
       confidenceScore: 62
     })
   );
-  return { summary: summarySentences.join(" "), evidenceIds };
+  const combined = summarySentences.join(" ");
+  const summary = combined.length > 360 ? `${combined.slice(0, 357).trimEnd()}...` : combined;
+  return { summary, evidenceIds };
 }
 
 function mainIssueFinding(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
@@ -247,18 +261,56 @@ function perspectiveFindings(page: ExtractedPage, evidenceItems: EvidenceItem[],
     });
     results.push(finding(item.text, [evidenceId], 58));
   }
+
+  const genericRoles = new Map<string, string>();
+  const genericPattern = /\b(researchers|experts|officials|residents|students|workers|patients|families|witnesses|tenants|tenant advocates|business owners|budget staff)\s+(?:said|say|found|reported|argued|warned|explained|requested)\b/i;
+  for (const sentence of sentences) {
+    const role = sentence.match(genericPattern)?.[1];
+    if (role) genericRoles.set(role.toLowerCase(), sentence);
+  }
+  for (const [role, sentence] of genericRoles) {
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: `Attributed ${role} perspective identified.`,
+      supportingText: sentence,
+      explanation: "The source attributes this passage to a stakeholder category but does not necessarily identify a named speaker or establish expertise.",
+      confidenceScore: 56
+    });
+    results.push(finding(`An attributed perspective from ${role} is included.`, [evidenceId], 56));
+  }
   return results.slice(0, 8);
 }
 
-function missingPerspectiveFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], included: AnalysisFinding[], quoted: ReturnType<typeof quotedSources>) {
+function missingPerspectiveFindings(
+  page: ExtractedPage,
+  evidenceItems: EvidenceItem[],
+  included: AnalysisFinding[],
+  quoted: ReturnType<typeof quotedSources>,
+  genre: ArticleGenre
+) {
   const joined = included.map((item) => item.text).join(" ").toLowerCase();
   const detected = quoted.length ? quoted.map((source) => source.name).join(", ") : "No named attributed sources detected";
   const suggestions: string[] = [];
-  if (!joined.includes("supportive")) suggestions.push("Check whether a clearly attributed supportive viewpoint is missing.");
-  if (!joined.includes("critical") && !joined.includes("opposing")) suggestions.push("Check whether a clearly attributed critical viewpoint is missing.");
-  if (!/expert|researcher|study/i.test(page.text)) suggestions.push("Consider whether independent expert context would clarify the issue.");
+  const hasIndependentContext = /\b(independent|expert|researcher|study|university|nonpartisan)\b/i.test(page.text);
+  const hasAffectedVoice = /\b(residents|students|workers|patients|families|voters|tenants|tenant advocates|business owners)\s+(?:said|say|told|argued|reported|explained)\b/i.test(page.text);
 
-  return suggestions.slice(0, 3).map((text) => {
+  if (genre === "opinion") {
+    if (!joined.match(/critical|opposing|counter/)) suggestions.push("Does the argument address the strongest reasonable counterargument?");
+    if (!quoted.length && !/\b(study|report|data|record|document)\b/i.test(page.text)) suggestions.push("Which evidence supports the author's central claim?");
+  } else if (genre === "data_report") {
+    if (!/\b(method|methodology|sample|margin of error|limitation|confidence interval)\b/i.test(page.text)) suggestions.push("Does the source explain the data's method, sample, and limits?");
+    if (!hasIndependentContext) suggestions.push("Would independent expert interpretation change how the findings should be read?");
+  } else if (genre === "event") {
+    if (!hasAffectedVoice) suggestions.push("Are people directly affected by the event represented in the reporting?");
+    if (included.length < 2 && !hasIndependentContext) suggestions.push("Is the main account corroborated by another source or primary record?");
+  } else if (genre === "investigation") {
+    if (!/\b(responded|declined to comment|response|spokesperson said)\b/i.test(page.text)) suggestions.push("Did the people or organizations under scrutiny receive a meaningful chance to respond?");
+    if (!/\b(record|document|filing|data|interview)\b/i.test(page.text)) suggestions.push("Which primary records support the investigation's central claim?");
+  } else {
+    if (!hasAffectedVoice) suggestions.push("Would a directly affected person's perspective add important context?");
+    if (!hasIndependentContext) suggestions.push("Would primary documents or independent expertise clarify the central claim?");
+  }
+
+  return suggestions.slice(0, 2).map((text) => {
     const noteId = addAnalysisNote(
       evidenceItems,
       page,
@@ -296,12 +348,12 @@ function framingFindings(
       )
     );
   }
-  if (quoted.length <= 1) {
+  if (included.length <= 1) {
     const noteId = addAnalysisNote(
       evidenceItems,
       page,
       "Narrow attributed-source base in extracted text.",
-      `${quoted.length} named attributed source${quoted.length === 1 ? " was" : "s were"} detected by the local parser.`,
+      `${included.length} attributed perspective${included.length === 1 ? " was" : "s were"} detected by the local parser.`,
       "Extraction or attribution patterns can miss sources, so this is a low-confidence review prompt."
     );
     results.push(finding("The extracted text may rely on a narrow attributed-source base.", [noteId], 38));
@@ -327,7 +379,8 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
   const loaded = loadedLanguageFindings(page, evidenceItems, sentences);
   const quoted = quotedSources(page.text);
   const included = perspectiveFindings(page, evidenceItems, sentences, quoted);
-  const missing = missingPerspectiveFindings(page, evidenceItems, included, quoted);
+  const genre = inferArticleGenre(page);
+  const missing = missingPerspectiveFindings(page, evidenceItems, included, quoted, genre);
   const framingNotes = framingFindings(page, evidenceItems, loaded, included, quoted);
   const quotedFindings = quoted.map((source) => {
     const existing = evidenceItems.find((item) => item.claim.includes(source.name));
@@ -360,6 +413,7 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
     author: page.author,
     publishedAt: page.publishedAt,
     contentType: "article",
+    genre,
     summary: summary.summary,
     summaryEvidenceIds: summary.evidenceIds,
     confidenceScore,
@@ -422,7 +476,7 @@ function affectedGroupFindings(page: ExtractedPage, evidenceItems: EvidenceItem[
       explanation: "The group appears in the same passage as a legislative action. Actual effects may depend on definitions, implementation, and funding.",
       confidenceScore: 50
     });
-    results.push(finding(`${group[0].toUpperCase()}${group.slice(1)} — named near a legislative action; actual impact is uncertain.`, [evidenceId], 50));
+    results.push(finding(`${group[0].toUpperCase()}${group.slice(1)}: named near a legislative action; actual impact is uncertain.`, [evidenceId], 50));
   }
   return results.slice(0, 6);
 }
@@ -542,4 +596,25 @@ export function analyzePage(page: ExtractedPage): Analysis {
   }
   const normalizedPage = { ...page, contentType };
   return contentType === "bill" ? analyzeBill(normalizedPage) : analyzeArticle({ ...normalizedPage, contentType: "article" });
+}
+
+export function keyFindingsFor(analysis: Analysis): AnalysisFinding[] {
+  const candidates = analysis.contentType === "article"
+    ? [
+        ...analysis.loadedLanguageExamples,
+        ...analysis.framingNotes.filter((item) => !item.text.startsWith("No strong framing signal")),
+        ...analysis.missingPerspectives
+      ]
+    : [
+        ...analysis.proposedChanges.filter((item) => !analysis.summary.includes(item.text)).slice(0, 1),
+        ...analysis.affectedGroups.slice(0, 1),
+        ...analysis.unclearImpacts.slice(0, 1)
+      ];
+
+  const unique = new Map<string, AnalysisFinding>();
+  for (const item of candidates) {
+    const key = item.text.trim().toLowerCase();
+    if (key && !unique.has(key)) unique.set(key, item);
+  }
+  return Array.from(unique.values()).slice(0, 3);
 }

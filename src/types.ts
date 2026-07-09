@@ -2,6 +2,9 @@ export type ContentType = "article" | "bill" | "unsupported" | "unknown";
 export type ConfidenceLabel = "High" | "Medium" | "Low";
 export type FeedbackType = "Helpful" | "Confusing" | "Incorrect" | "Biased";
 export type EvidenceKind = "source_text" | "outside_context" | "analysis_note";
+export type ArticleGenre = "event" | "opinion" | "data_report" | "explainer" | "investigation" | "general";
+export type BiasDimension = "political" | "gender" | "ethnicity";
+export type BiasMetricStatus = "assessed" | "insufficient-evidence";
 
 export interface ExtractedPage {
   title: string;
@@ -34,8 +37,21 @@ export interface AnalysisFinding {
 }
 
 export interface BiasMetric {
-  score: number;
+  score: number | null;
   confidence: number;
+  evidenceCount: number;
+  status: BiasMetricStatus;
+}
+
+export interface BiasSignal {
+  id: string;
+  dimension: BiasDimension;
+  category: "loaded_language" | "epistemic_framing" | "persuasion" | "stereotype_association";
+  phrase: string;
+  context: string;
+  explanation: string;
+  neutralAlternative?: string;
+  severity: 1 | 2 | 3;
 }
 
 export interface TargetDependentAsymmetry {
@@ -53,12 +69,13 @@ export interface BackendBiasAnalysis {
     spin_words_detected: string[];
     target_dependent_asymmetries: TargetDependentAsymmetry[];
     counterfactual_sentiment_delta: number;
+    signals: BiasSignal[];
   };
   contextual_analysis: {
     missing_perspectives: string[];
     stereotypical_associations: string[];
   };
-  source: "hybrid-backend" | "local-fallback";
+  source: "hybrid-backend" | "local-heuristic" | "local-fallback";
 }
 
 export interface BaseAnalysis {
@@ -80,6 +97,7 @@ export interface BaseAnalysis {
 
 export interface ArticleAnalysis extends BaseAnalysis {
   contentType: "article";
+  genre: ArticleGenre;
   mainIssue: AnalysisFinding;
   framingNotes: AnalysisFinding[];
   loadedLanguageExamples: Array<AnalysisFinding & { phrase: string; context: string }>;

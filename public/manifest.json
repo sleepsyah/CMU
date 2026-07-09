@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "unframed",
   "description": "Understand framing, bias, loaded language, missing perspectives, and plain-language meaning in articles and Congress.gov bills.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "action": {
     "default_title": "Open unframed"
   },

@@ -1,4 +1,4 @@
-import type { Analysis, AnalysisFinding, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis } from "../types";
+import type { Analysis, AnalysisFinding, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis } from "../types";
 
 const HISTORY_KEY = "unframed.savedAnalyses";
 const FEEDBACK_KEY = "unframed.feedbackLogs";
@@ -35,6 +35,39 @@ function migrateEvidence(value: EvidenceItem, sourceName: string): EvidenceItem 
   };
 }
 
+function migrateMetric(value: Partial<BiasMetric> | undefined): BiasMetric {
+  const score = typeof value?.score === "number" && Number.isFinite(value.score) ? value.score : null;
+  const evidenceCount = typeof value?.evidenceCount === "number" ? value.evidenceCount : score === null ? 0 : 1;
+  return {
+    score,
+    confidence: typeof value?.confidence === "number" ? value.confidence : 0.35,
+    evidenceCount,
+    status: value?.status || (score === null ? "insufficient-evidence" : "assessed")
+  };
+}
+
+function migrateBackendBias(value: BackendBiasAnalysis | undefined): BackendBiasAnalysis | undefined {
+  if (!value?.scores) return undefined;
+  return {
+    ...value,
+    scores: {
+      political_bias: migrateMetric(value.scores.political_bias),
+      gender_bias: migrateMetric(value.scores.gender_bias),
+      ethnicity_bias: migrateMetric(value.scores.ethnicity_bias)
+    },
+    linguistic_evidence: {
+      spin_words_detected: value.linguistic_evidence?.spin_words_detected || [],
+      target_dependent_asymmetries: value.linguistic_evidence?.target_dependent_asymmetries || [],
+      counterfactual_sentiment_delta: value.linguistic_evidence?.counterfactual_sentiment_delta || 0,
+      signals: value.linguistic_evidence?.signals || []
+    },
+    contextual_analysis: {
+      missing_perspectives: value.contextual_analysis?.missing_perspectives || [],
+      stereotypical_associations: value.contextual_analysis?.stereotypical_associations || []
+    }
+  };
+}
+
 export function migrateSavedAnalysis(value: SavedAnalysis): SavedAnalysis | null {
   const legacy = value?.analysis as Analysis | undefined;
   if (!legacy || (legacy.contentType !== "article" && legacy.contentType !== "bill")) return null;
@@ -44,12 +77,14 @@ export function migrateSavedAnalysis(value: SavedAnalysis): SavedAnalysis | null
     publishedAt: legacy.publishedAt || "",
     summaryEvidenceIds: Array.isArray(legacy.summaryEvidenceIds) ? legacy.summaryEvidenceIds : [],
     evidence: Array.isArray(legacy.evidence) ? legacy.evidence.map((item) => migrateEvidence(item, legacy.sourceName)) : [],
+    backendBias: migrateBackendBias(legacy.backendBias),
     mainIssue: migrateFinding(legacy.mainIssue)
   };
   const analysis: Analysis = legacy.contentType === "article"
     ? {
         ...common,
         contentType: "article",
+        genre: legacy.genre || "general",
         framingNotes: (legacy.framingNotes || []).map(migrateFinding),
         loadedLanguageExamples: (legacy.loadedLanguageExamples || []).map((item) => ({
           ...migrateFinding(item),

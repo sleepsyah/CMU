@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,11 +16,6 @@ class Settings(BaseSettings):
     toxicity_model: str = "unitary/unbiased-toxic-roberta"
     coref_bias_model: Optional[str] = None
     spacy_model: str = "en_core_web_sm"
-
-    llm_provider: Literal["none", "openai"] = "none"
-    llm_model: str = "gpt-4o"
-    openai_api_key: Optional[str] = None
-    llm_timeout_seconds: float = 30.0
 
     max_text_chars: int = 24000
 
