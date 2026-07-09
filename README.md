@@ -14,6 +14,7 @@ npm run build
 ```
 
 Load the generated `dist/` folder from `chrome://extensions` with Developer mode enabled.
+After rebuilding an already loaded copy, click **Reload** on its extension card so Chrome refreshes the manifest name and browser-level icons.
 
 The optional local model helper is documented in [`backend/README.md`](backend/README.md). The extension accepts only an explicit loopback HTTP endpoint, so article text cannot be configured to go to a remote backend.
 

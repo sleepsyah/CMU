@@ -5,6 +5,7 @@
   "version": "0.2.0",
   "icons": {
     "16": "icons/unframed-16.png",
+    "24": "icons/unframed-24.png",
     "32": "icons/unframed-32.png",
     "48": "icons/unframed-48.png",
     "128": "icons/unframed-128.png"
@@ -13,6 +14,7 @@
     "default_title": "Open Unframed",
     "default_icon": {
       "16": "icons/unframed-16.png",
+      "24": "icons/unframed-24.png",
       "32": "icons/unframed-32.png",
       "48": "icons/unframed-48.png"
     }
