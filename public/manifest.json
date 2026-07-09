@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Unframed",
+  "name": "unframed",
   "description": "Understand framing, bias, loaded language, missing perspectives, and plain-language meaning in articles and Congress.gov bills.",
   "version": "0.1.0",
   "action": {
-    "default_title": "Open Unframed"
+    "default_title": "Open unframed"
   },
   "side_panel": {
     "default_path": "sidepanel/index.html"
@@ -12,13 +12,5 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content-script.js"],
-      "run_at": "document_idle"
-    }
-  ],
-  "permissions": ["activeTab", "sidePanel", "storage", "tabs"],
-  "host_permissions": ["<all_urls>"]
+  "permissions": ["activeTab", "scripting", "sidePanel", "storage", "tabs"]
 }

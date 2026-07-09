@@ -1,6 +1,6 @@
-# Unframed
+# unframed
 
-Unframed is a Chrome side-panel extension prototype. It helps readers review news articles and Congress.gov bills for framing, evidence, missing perspectives, and uncertainty.
+unframed is a Chrome side-panel extension prototype. It helps readers review news articles and Congress.gov bills for framing, evidence, missing perspectives, and uncertainty.
 
 ## Test In Chrome
 
@@ -8,6 +8,7 @@ Unframed is a Chrome side-panel extension prototype. It helps readers review new
 
 ```sh
 npm install
+npm test
 npm run build
 ```
 
@@ -21,7 +22,7 @@ npm run build
 ```
 
 6. Open a specific news article or Congress.gov bill page.
-7. Click the Unframed extension icon.
+7. Click the unframed extension icon.
 8. Click **Analyze** in the side panel.
 
 If the page cannot be extracted, paste article or bill text into **Manual Paste** and click **Analyze pasted text**.
@@ -36,18 +37,20 @@ npm run typecheck
 npm run build
 ```
 
-Then go back to `chrome://extensions` and click the reload button on Unframed.
+Then go back to `chrome://extensions` and click the reload button on unframed.
 
 ## What To Check
 
-- News article analysis shows summary, main issue, framing, loaded language, quoted sources, included perspectives, missing perspectives, evidence, and confidence.
-- Bill analysis shows plain-language summary, proposed changes, affected groups, sourced supporters/opponents only when supported, unclear impacts, important terms, evidence, and confidence.
+- News article analysis shows summary, main issue, framing prompts, potentially loaded language, attributed sources, included perspectives, perspectives to check, evidence, and confidence.
+- Bill analysis shows summary, main issue, proposed changes, potentially affected groups, directly attributed supporters/opponents, unclear impacts, sourced terms, evidence, and confidence.
 - Unsupported pages show an error and point users to Manual Paste.
 - **Save locally** stores an analysis.
 - **History** opens and deletes saved analyses.
-- **Feedback** logs anonymous local feedback.
+- **Feedback** records anonymous feedback only on the current device; it is not submitted to the team in this MVP.
 - **New analysis** resets the panel for another test.
 
 ## Current Limits
 
-This is an MVP prototype. Analysis is local and heuristic. It does not yet use an LLM API, Supabase, Congress.gov API, outlet-context databases, or external citation validation. Fully Vibe coded.
+This is an MVP prototype. Analysis is local and heuristic, and its confidence is intentionally capped below “High.” It does not yet use an LLM API, Supabase, the Congress.gov API, outlet-context databases, or external citation validation. Source-text evidence, outside context, and parser notes are labeled separately.
+
+The extension requests access to the active page only after the user invokes it. Saved analyses and feedback stay in local extension storage. Full extracted or pasted page text is not stored unless it appears as a short evidence excerpt inside an explicitly saved analysis.

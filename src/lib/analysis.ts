@@ -1,10 +1,12 @@
 import type {
   Analysis,
+  AnalysisFinding,
   ArticleAnalysis,
   BillAnalysis,
   ConfidenceLabel,
   ContentType,
   EvidenceItem,
+  EvidenceKind,
   ExtractedPage
 } from "../types";
 
@@ -27,34 +29,21 @@ const LOADED_TERMS = [
   "blasted"
 ];
 
-const PERSPECTIVE_HINTS = [
-  "supporter",
-  "opponent",
-  "advocate",
-  "critic",
-  "expert",
-  "researcher",
-  "official",
-  "resident",
-  "student",
-  "worker",
-  "business",
-  "agency",
-  "organization"
-];
-
+const CONGRESS_GLOSSARY_URL = "https://www.congress.gov/help/legislative-glossary";
 const TERM_GLOSSARY: Record<string, string> = {
-  appropriation: "Permission for government money to be spent for a specific purpose.",
-  amendment: "A formal change to existing law or to the text of a bill.",
-  authorization: "Permission for a program or agency to operate, often before money is provided.",
-  committee: "A smaller group of lawmakers that reviews a bill before it moves forward.",
-  fiscal: "Related to government spending, revenue, or budgets.",
-  regulation: "A rule created by a government agency to carry out a law.",
-  subsidy: "Government support, often money or tax benefits, for a group or activity.",
-  eligibility: "The rules that decide who can receive a benefit or take part in a program."
+  appropriation: "Government authority to spend money for a stated purpose.",
+  amendment: "A proposed change to a bill or other pending text.",
+  authorization: "Legal authority for a program or activity, often separate from its funding.",
+  committee: "A group of lawmakers that examines legislation and other matters.",
+  fiscal: "Related to government revenue, spending, or budgets.",
+  regulation: "A rule issued by an agency to carry out a law.",
+  subsidy: "Government support, such as a payment or tax benefit, for an activity or group.",
+  eligibility: "The conditions a person or organization must meet to qualify."
 };
 
 const GENERIC_SOURCE_NAMES = /^(supporters|opponents|critics|advocates|officials|experts|researchers|lawmakers|people|residents|students|workers)$/i;
+const NAME_PART = "[A-Z][A-Za-z&.'’–-]+";
+const NAMED_ACTOR = `${NAME_PART}(?:\\s+(?:(?:of|the|and|for|in|on)\\s+)?${NAME_PART}){0,6}`;
 
 function makeId(prefix: string) {
   const random = Math.random().toString(36).slice(2, 8);
@@ -62,10 +51,7 @@ function makeId(prefix: string) {
 }
 
 function normalizeWhitespace(text: string) {
-  return text
-    .replace(/\u00a0/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return text.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function splitSentences(text: string) {
@@ -73,221 +59,318 @@ function splitSentences(text: string) {
     .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length > 24)
-    .slice(0, 80);
+    .slice(0, 120);
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function confidenceLabel(score: number): ConfidenceLabel {
+export function confidenceLabel(score: number): ConfidenceLabel {
   if (score >= 75) return "High";
   if (score >= 50) return "Medium";
   return "Low";
 }
 
-function confidenceFor(page: ExtractedPage, evidenceCount: number) {
-  let score = 42;
-  if (page.text.length > 1800) score += 18;
-  if (page.text.length > 5000) score += 8;
-  if (page.title.length > 8) score += 6;
-  if (page.links.length > 0) score += 4;
-  score += Math.min(evidenceCount * 4, 16);
-  if (page.contentType === "unknown") score -= 16;
-  return clamp(score, 25, 92);
+function finding(text: string, evidenceIds: string[], confidenceScore: number): AnalysisFinding {
+  return { text, evidenceIds, confidenceScore, confidenceLabel: confidenceLabel(confidenceScore) };
+}
+
+function sourceUrl(page: ExtractedPage) {
+  return /^https?:\/\//.test(page.url) ? page.url : null;
+}
+
+function sourceLabel(page: ExtractedPage) {
+  return sourceUrl(page) ? page.sourceName || "Active page" : "Pasted source text";
+}
+
+function addEvidence(
+  items: EvidenceItem[],
+  page: ExtractedPage,
+  input: {
+    claim: string;
+    supportingText: string;
+    explanation: string;
+    confidenceScore: number;
+    kind?: EvidenceKind;
+    sourceUrl?: string | null;
+    sourceLabel?: string;
+  }
+) {
+  const id = makeId("ev");
+  items.push({
+    id,
+    claim: input.claim,
+    supportingText: input.supportingText,
+    sourceUrl: input.sourceUrl === undefined ? sourceUrl(page) : input.sourceUrl,
+    sourceLabel: input.sourceLabel || sourceLabel(page),
+    kind: input.kind || "source_text",
+    explanation: input.explanation,
+    confidenceScore: input.confidenceScore,
+    confidenceLabel: confidenceLabel(input.confidenceScore)
+  });
+  return id;
+}
+
+function addAnalysisNote(items: EvidenceItem[], page: ExtractedPage, claim: string, note: string, explanation: string) {
+  return addEvidence(items, page, {
+    claim,
+    supportingText: note,
+    explanation,
+    confidenceScore: 35,
+    kind: "analysis_note",
+    sourceUrl: null,
+    sourceLabel: "unframed analysis note"
+  });
 }
 
 function firstUsefulSentences(sentences: string[], count: number) {
-  return sentences
-    .filter((sentence) => !/cookie|subscribe|advertisement|newsletter/i.test(sentence))
-    .slice(0, count);
+  return sentences.filter((sentence) => !/cookie|subscribe|advertisement|newsletter/i.test(sentence)).slice(0, count);
 }
 
-function findSentenceFor(text: string, pattern: RegExp) {
-  return splitSentences(text).find((sentence) => pattern.test(sentence)) || "";
+function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
+  const directEvidence = evidenceItems.filter((item) => item.kind === "source_text").length;
+  const analysisNotes = evidenceItems.filter((item) => item.kind === "analysis_note").length;
+  let score = 34;
+  if (page.text.length > 1200) score += 8;
+  if (page.text.length > 4000) score += 6;
+  if (page.author) score += 3;
+  if (page.publishedAt) score += 3;
+  if (sourceUrl(page)) score += 4;
+  score += Math.min(directEvidence * 2, 14);
+  score -= Math.min(analysisNotes * 2, 10);
+  if (page.contentType === "unknown") score -= 8;
+
+  // Local heuristics are useful reading aids, not validated factual analysis.
+  return clamp(score, 25, 74);
 }
 
-function evidence(
-  claim: string,
-  supportingText: string,
-  sourceUrl: string,
-  explanation: string,
-  confidenceScore: number
-): EvidenceItem {
-  return {
-    id: makeId("ev"),
-    claim,
-    supportingText: supportingText || "No specific source sentence was available in the extracted text.",
-    sourceUrl,
-    explanation,
-    confidenceScore,
-    confidenceLabel: confidenceLabel(confidenceScore)
-  };
+function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
+  const summarySentences = firstUsefulSentences(sentences, 2);
+  if (!summarySentences.length) return { summary: "The extracted text was not complete enough to summarize.", evidenceIds: [] };
+  const evidenceIds = summarySentences.map((sentence) =>
+    addEvidence(evidenceItems, page, {
+      claim: "Source passage used in the short summary.",
+      supportingText: sentence,
+      explanation: "This passage was selected from the opening substantive source text. It is not independently verified.",
+      confidenceScore: 62
+    })
+  );
+  return { summary: summarySentences.join(" "), evidenceIds };
 }
 
-function inferMainIssue(title: string, sentences: string[]) {
-  const titleWords = title
-    .replace(/[^\w\s-]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length > 3)
-    .slice(0, 8);
-
-  if (titleWords.length >= 3) return titleWords.join(" ");
-  return firstUsefulSentences(sentences, 1)[0]?.slice(0, 140) || "The main issue is unclear from the extracted text.";
+function mainIssueFinding(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
+  const sentence = firstUsefulSentences(sentences, 1)[0];
+  if (!sentence) {
+    const noteId = addAnalysisNote(
+      evidenceItems,
+      page,
+      "Main issue could not be identified.",
+      "No substantive sentence was detected in the extracted text.",
+      "The result is intentionally left uncertain instead of inferring a topic."
+    );
+    return finding("The main issue is unclear from the extracted text.", [noteId], 30);
+  }
+  const evidenceId = addEvidence(evidenceItems, page, {
+    claim: "Possible main issue.",
+    supportingText: sentence,
+    explanation: "The opening substantive passage appears to introduce the central topic; verify it against the full source.",
+    confidenceScore: 58
+  });
+  return finding(sentence.slice(0, 180), [evidenceId], 58);
 }
 
-function loadedLanguage(text: string) {
-  const sentences = splitSentences(text);
-  const matches: Array<{ phrase: string; context: string }> = [];
-
+function loadedLanguageFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
+  const results: ArticleAnalysis["loadedLanguageExamples"] = [];
   for (const term of LOADED_TERMS) {
     const matcher = new RegExp(`\\b${term}\\b`, "i");
-    const sentence = sentences.find((candidate) => matcher.test(candidate));
-    if (sentence) {
-      matches.push({ phrase: term, context: sentence });
-    }
-    if (matches.length >= 6) break;
+    const context = sentences.find((sentence) => matcher.test(sentence));
+    if (!context) continue;
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: `Potentially loaded wording: “${term}”.`,
+      supportingText: context,
+      explanation: "The word can carry emotional weight, but its use may still be accurate in context. Treat this as a prompt to inspect the wording, not a bias verdict.",
+      confidenceScore: 52
+    });
+    results.push({ ...finding(`“${term}” may add emotional emphasis.`, [evidenceId], 52), phrase: term, context });
+    if (results.length >= 5) break;
   }
-
-  return matches;
+  return results;
 }
 
 function quotedSources(text: string) {
-  const names = new Set<string>();
+  const sentences = splitSentences(text);
+  const values = new Map<string, string>();
   const patterns = [
-    /(?:said|says|according to|told|wrote)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})/g,
-    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s+(?:said|says|told|wrote|argued)/g,
-    /according to\s+(the\s+)?([A-Z][A-Za-z&.\s-]{3,42})/g
+    new RegExp(`(?:According to|according to)\\s+(?:the\\s+)?(${NAMED_ACTOR})`, "g"),
+    new RegExp(`(${NAMED_ACTOR})\\s+(?:said|says|told|wrote|argued)\\b`, "g"),
+    new RegExp(`(?:said|says|told|wrote|argued)\\s+(${NAMED_ACTOR})`, "g")
   ];
 
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const value = normalizeWhitespace(match[2] || match[1] || "");
-      if (
-        value.length > 2 &&
-        value.length < 60 &&
-        !GENERIC_SOURCE_NAMES.test(value) &&
-        !/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/.test(value)
-      ) {
-        names.add(value.replace(/^the\s+/i, ""));
+  for (const sentence of sentences) {
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      for (const match of sentence.matchAll(pattern)) {
+        const name = normalizeWhitespace(match[1] || "").replace(/^The\s+/i, "");
+        if (name.length > 2 && name.length < 80 && !GENERIC_SOURCE_NAMES.test(name)) values.set(name, sentence);
+        if (values.size >= 10) break;
       }
-      if (names.size >= 8) break;
     }
   }
-
-  return Array.from(names);
+  return Array.from(values, ([name, sentence]) => ({ name, sentence }));
 }
 
-function includedPerspectives(text: string, quoted: string[]) {
-  const lower = text.toLowerCase();
-  const included = PERSPECTIVE_HINTS.filter((hint) => lower.includes(hint)).map((hint) => {
-    if (hint === "expert") return "Expert or researcher perspective";
-    if (hint === "official") return "Government or official perspective";
-    if (hint === "critic") return "Critical perspective";
-    if (hint === "supporter") return "Supportive perspective";
-    if (hint === "opponent") return "Opposing perspective";
-    return `${hint[0].toUpperCase()}${hint.slice(1)} perspective`;
-  });
-
-  if (quoted.length > 0) included.unshift("Directly quoted sources");
-  return Array.from(new Set(included)).slice(0, 5);
-}
-
-function missingPerspectives(included: string[]) {
-  const missing = [];
-  const joined = included.join(" ").toLowerCase();
-  if (!joined.includes("opposing") && !joined.includes("critical")) missing.push("Opposing or skeptical voices are not clear in the extracted text.");
-  if (!joined.includes("expert") && !joined.includes("researcher")) missing.push("Independent expert context may be missing.");
-  if (!joined.includes("resident") && !joined.includes("student") && !joined.includes("worker")) {
-    missing.push("People directly affected by the issue are not clearly represented.");
+function perspectiveFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[], quoted: ReturnType<typeof quotedSources>) {
+  const results: AnalysisFinding[] = [];
+  for (const source of quoted) {
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: `Attributed source identified: ${source.name}.`,
+      supportingText: source.sentence,
+      explanation: "The source is named in an attribution pattern. This does not establish the source's viewpoint or expertise.",
+      confidenceScore: 66
+    });
+    results.push(finding(`Attributed perspective from ${source.name}.`, [evidenceId], 66));
   }
-  return missing.slice(0, 4);
+
+  const viewpointPatterns = [
+    { pattern: /\b(supporters|backers|advocates)\b/i, text: "A supportive viewpoint is described." },
+    { pattern: /\b(critics|opponents)\b/i, text: "A critical or opposing viewpoint is described." }
+  ];
+  for (const item of viewpointPatterns) {
+    const sentence = sentences.find((candidate) => item.pattern.test(candidate));
+    if (!sentence) continue;
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: item.text,
+      supportingText: sentence,
+      explanation: "The source text explicitly labels this viewpoint, although it may not name or quote a specific person.",
+      confidenceScore: 58
+    });
+    results.push(finding(item.text, [evidenceId], 58));
+  }
+  return results.slice(0, 8);
 }
 
-function framingNotesFor(page: ExtractedPage, loaded: Array<{ phrase: string; context: string }>, quoted: string[]) {
-  const notes = [];
-  if (loaded.length > 0) {
-    notes.push("Some wording may push readers toward an emotional reaction before evidence is evaluated.");
+function missingPerspectiveFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], included: AnalysisFinding[], quoted: ReturnType<typeof quotedSources>) {
+  const joined = included.map((item) => item.text).join(" ").toLowerCase();
+  const detected = quoted.length ? quoted.map((source) => source.name).join(", ") : "No named attributed sources detected";
+  const suggestions: string[] = [];
+  if (!joined.includes("supportive")) suggestions.push("Check whether a clearly attributed supportive viewpoint is missing.");
+  if (!joined.includes("critical") && !joined.includes("opposing")) suggestions.push("Check whether a clearly attributed critical viewpoint is missing.");
+  if (!/expert|researcher|study/i.test(page.text)) suggestions.push("Consider whether independent expert context would clarify the issue.");
+
+  return suggestions.slice(0, 3).map((text) => {
+    const noteId = addAnalysisNote(
+      evidenceItems,
+      page,
+      "Perspective to check, not a confirmed omission.",
+      `Attributed sources detected by the local parser: ${detected}.`,
+      "Absence is difficult to prove from extracted text, so this is presented as a review question rather than a factual claim."
+    );
+    return finding(text, [noteId], 35);
+  });
+}
+
+function framingFindings(
+  page: ExtractedPage,
+  evidenceItems: EvidenceItem[],
+  loaded: ArticleAnalysis["loadedLanguageExamples"],
+  included: AnalysisFinding[],
+  quoted: ReturnType<typeof quotedSources>
+) {
+  const results: AnalysisFinding[] = [];
+  if (loaded.length) {
+    results.push(
+      finding(
+        "Some wording may encourage an emotional reading; inspect the cited passages in context.",
+        loaded.flatMap((item) => item.evidenceIds),
+        50
+      )
+    );
+  }
+  if (included.some((item) => /supportive/.test(item.text)) && included.some((item) => /critical|opposing/.test(item.text))) {
+    results.push(
+      finding(
+        "The extracted text organizes part of the issue around supportive and critical reactions.",
+        included.flatMap((item) => item.evidenceIds),
+        56
+      )
+    );
   }
   if (quoted.length <= 1) {
-    notes.push("The extracted text shows a narrow quoted-source base, so the article may rely on limited perspectives.");
+    const noteId = addAnalysisNote(
+      evidenceItems,
+      page,
+      "Narrow attributed-source base in extracted text.",
+      `${quoted.length} named attributed source${quoted.length === 1 ? " was" : "s were"} detected by the local parser.`,
+      "Extraction or attribution patterns can miss sources, so this is a low-confidence review prompt."
+    );
+    results.push(finding("The extracted text may rely on a narrow attributed-source base.", [noteId], 38));
   }
-  if (/critics|supporters|opponents/i.test(page.text)) {
-    notes.push("The article frames part of the issue through competing political or stakeholder reactions.");
+  if (!results.length) {
+    const noteId = addAnalysisNote(
+      evidenceItems,
+      page,
+      "No strong framing signal detected.",
+      "The local parser did not detect its limited set of framing signals.",
+      "This is not evidence that the article is neutral."
+    );
+    results.push(finding("No strong framing signal was detected; this is not a neutrality rating.", [noteId], 35));
   }
-  if (notes.length === 0) {
-    notes.push("No strong framing signal was found in the extracted text. Review the evidence because extraction may miss page context.");
-  }
-  return notes;
+  return results;
 }
 
 function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
   const sentences = splitSentences(page.text);
-  const summarySentences = firstUsefulSentences(sentences, 2);
-  const loaded = loadedLanguage(page.text);
+  const evidenceItems: EvidenceItem[] = [];
+  const summary = summaryEvidence(page, evidenceItems, sentences);
+  const mainIssue = mainIssueFinding(page, evidenceItems, sentences);
+  const loaded = loadedLanguageFindings(page, evidenceItems, sentences);
   const quoted = quotedSources(page.text);
-  const included = includedPerspectives(page.text, quoted);
-  const missing = missingPerspectives(included);
-  const framingNotes = framingNotesFor(page, loaded, quoted);
-  const ev: EvidenceItem[] = [];
+  const included = perspectiveFindings(page, evidenceItems, sentences, quoted);
+  const missing = missingPerspectiveFindings(page, evidenceItems, included, quoted);
+  const framingNotes = framingFindings(page, evidenceItems, loaded, included, quoted);
+  const quotedFindings = quoted.map((source) => {
+    const existing = evidenceItems.find((item) => item.claim.includes(source.name));
+    return finding(source.name, existing ? [existing.id] : [], 66);
+  });
+  const displayedIncluded = included.length
+    ? included
+    : [
+        finding(
+          "No named or explicitly labeled perspectives were reliably detected.",
+          [
+            addAnalysisNote(
+              evidenceItems,
+              page,
+              "No perspectives reliably detected.",
+              "The local attribution parser returned no named or explicitly labeled viewpoints.",
+              "This may reflect extraction limits rather than the source itself."
+            )
+          ],
+          32
+        )
+      ];
+  const confidenceScore = confidenceFor(page, evidenceItems);
 
-  if (summarySentences[0]) {
-    ev.push(
-      evidence(
-        "Summary is based on the opening extracted article text.",
-        summarySentences[0],
-        page.url,
-        "The first substantive sentence usually states the topic or event the article is about.",
-        78
-      )
-    );
-  }
-
-  if (loaded[0]) {
-    ev.push(
-      evidence(
-        `Loaded language found: ${loaded[0].phrase}`,
-        loaded[0].context,
-        page.url,
-        "This term can carry emotional judgment beyond a neutral description.",
-        72
-      )
-    );
-  }
-
-  if (quoted[0]) {
-    const sentence = findSentenceFor(page.text, new RegExp(quoted[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    ev.push(
-      evidence(
-        "Quoted or attributed source identified.",
-        sentence,
-        page.url,
-        "Quoted people and groups help show whose views are represented.",
-        68
-      )
-    );
-  }
-
-  const confidenceScore = confidenceFor(page, ev.length);
   return {
     id: makeId("analysis"),
     url: page.url,
     pageTitle: page.title,
     sourceName: page.sourceName,
+    author: page.author,
+    publishedAt: page.publishedAt,
     contentType: "article",
-    summary: summarySentences.join(" ") || "The article text could not be summarized confidently from the extracted page content.",
+    summary: summary.summary,
+    summaryEvidenceIds: summary.evidenceIds,
     confidenceScore,
-    confidenceReason:
-      confidenceScore < 50
-        ? "The extracted text was short, incomplete, or lacked enough attributable evidence."
-        : "The analysis is based on extracted page text and specific article evidence.",
+    confidenceReason: "This local heuristic review is limited to extracted source text. Findings are prompts for closer reading, not verified bias judgments.",
     createdAt: new Date().toISOString(),
-    evidence: ev,
-    mainIssue: inferMainIssue(page.title, sentences),
+    evidence: evidenceItems,
+    mainIssue,
     framingNotes,
     loadedLanguageExamples: loaded,
-    quotedPeopleOrGroups: quoted.length ? quoted : ["No clear quoted people or groups were found in the extracted text."],
-    includedPerspectives: included.length ? included : ["The represented perspectives are unclear from the extracted text."],
+    quotedPeopleOrGroups: quotedFindings,
+    includedPerspectives: displayedIncluded,
     missingPerspectives: missing
   };
 }
@@ -295,8 +378,7 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
 function billNumberFrom(page: ExtractedPage) {
   const urlMatch = page.url.match(/\/bill\/\d+(?:st|nd|rd|th)-congress\/([^/]+)\/(\d+)/i);
   if (urlMatch) return `${urlMatch[1].replace("-", " ").toUpperCase()} ${urlMatch[2]}`;
-  const textMatch = page.text.match(/\b(H\.R\.|S\.|H\.Res\.|S\.Res\.)\s?\d+\b/i);
-  return textMatch?.[0] || "Bill number not found";
+  return page.text.match(/\b(H\.R\.|S\.|H\.Res\.|S\.Res\.)\s?\d+\b/i)?.[0] || "Bill number not found";
 }
 
 function looksLikeBillText(text: string, url = "") {
@@ -306,148 +388,150 @@ function looksLikeBillText(text: string, url = "") {
     /\bA bill to\b/i.test(text) ||
     /\bBe it enacted by the Senate and House\b/i.test(text) ||
     (/\bSECTION\s+1\b/i.test(text) && /\b(amend|authorize|require|prohibit|appropriate|establish)\b/i.test(text));
-
   return hasCongressUrl || (hasBillIdentifier && hasBillLanguage);
 }
 
-function proposedChanges(text: string) {
-  const sentences = splitSentences(text);
-  const changeSentences = sentences.filter((sentence) => /\b(amend|establish|require|prohibit|authorize|appropriate|direct|create|increase|reduce)\b/i.test(sentence));
-  return changeSentences.slice(0, 5);
+function proposedChangeFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
+  return sentences
+    .filter((sentence) => /\b(amend|establish|require|prohibit|authorize|appropriate|direct|create|increase|reduce|repeal)\b/i.test(sentence))
+    .slice(0, 5)
+    .map((sentence) => {
+      const evidenceId = addEvidence(evidenceItems, page, {
+        claim: "Possible proposed change.",
+        supportingText: sentence,
+        explanation: "A legislative action verb appears in this passage. Read the surrounding section to confirm its scope and conditions.",
+        confidenceScore: 58
+      });
+      return finding(sentence, [evidenceId], 58);
+    });
 }
 
-function affectedGroups(text: string) {
-  const groups = [
-    "students",
-    "workers",
-    "families",
-    "veterans",
-    "small businesses",
-    "agencies",
-    "states",
-    "schools",
-    "patients",
-    "consumers",
-    "employers",
-    "immigrants",
-    "farmers",
-    "taxpayers"
-  ];
-  return groups.filter((group) => new RegExp(`\\b${group}\\b`, "i").test(text)).slice(0, 6);
+function affectedGroupFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
+  const groups = ["students", "workers", "families", "veterans", "small businesses", "agencies", "states", "schools", "patients", "consumers", "employers", "immigrants", "farmers", "taxpayers"];
+  const action = /\b(receive|receives|provide|provides|grant|grants|eligible|prohibit|prohibits|require|requires|tax|taxes|fund|funds|regulate|regulates|benefit|benefits|pay|pays)\b/i;
+  const exclusion = /\b(does not|do not|did not|not provide|only mentioned|are mentioned|is mentioned)\b/i;
+  const results: AnalysisFinding[] = [];
+  for (const group of groups) {
+    const sentence = sentences.find(
+      (candidate) => new RegExp(`\\b${group}\\b`, "i").test(candidate) && action.test(candidate) && !exclusion.test(candidate)
+    );
+    if (!sentence) continue;
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: `Potentially affected group named in a provision: ${group}.`,
+      supportingText: sentence,
+      explanation: "The group appears in the same passage as a legislative action. Actual effects may depend on definitions, implementation, and funding.",
+      confidenceScore: 50
+    });
+    results.push(finding(`${group[0].toUpperCase()}${group.slice(1)} — named near a legislative action; actual impact is uncertain.`, [evidenceId], 50));
+  }
+  return results.slice(0, 6);
 }
 
-function supportersOpponents(text: string, mode: "support" | "oppose") {
-  const verbPattern =
-    mode === "support"
-      ? /\b(supports|supported|endorses|endorsed|backed|backs)\b/i
-      : /\b(opposes|opposed|criticized|objects|objected)\b/i;
-  const actorPattern = /^\s*((?:The\s+)?[A-Z][A-Za-z&'-]+(?:\s+[A-Z][A-Za-z&'-]+){0,5})\s+/;
-  const values = new Set<string>();
-
-  for (const sentence of splitSentences(text)) {
-    if (!verbPattern.test(sentence)) continue;
-    const match = sentence.match(actorPattern);
-    const actor = normalizeWhitespace(match?.[1] || "").replace(/^The\s+/i, "");
-    if (!actor || GENERIC_SOURCE_NAMES.test(actor)) continue;
-    values.add(actor);
+function supporterOpponentFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[], mode: "support" | "oppose") {
+  const verb = mode === "support" ? "(?:supports|supported|endorses|endorsed|backed|backs)" : "(?:opposes|opposed|criticized|objects|objected)";
+  const pattern = new RegExp(`^\\s*(?:The\\s+)?(${NAMED_ACTOR})\\s+${verb}\\b`);
+  const values = new Map<string, string>();
+  for (const sentence of sentences) {
+    const match = sentence.match(pattern);
+    const actor = normalizeWhitespace(match?.[1] || "");
+    if (actor && !GENERIC_SOURCE_NAMES.test(actor)) values.set(actor, sentence);
     if (values.size >= 5) break;
   }
-
-  return Array.from(values);
+  return Array.from(values, ([actor, sentence]) => {
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: `${actor} is described as ${mode === "support" ? "supporting" : "opposing"} the bill.`,
+      supportingText: sentence,
+      explanation: "The extracted source text directly pairs this named actor with a support or opposition verb. This does not independently verify the position.",
+      confidenceScore: 64
+    });
+    return finding(actor, [evidenceId], 64);
+  });
 }
 
-function importantTerms(text: string) {
-  const found = Object.entries(TERM_GLOSSARY)
-    .filter(([term]) => new RegExp(`\\b${term}\\b`, "i").test(text))
-    .map(([term, meaning]) => ({ term, meaning }));
-  return found.slice(0, 5);
+function unclearImpactFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
+  const passages = sentences.filter((sentence) => /\b(implementation|funding|appropriation|subject to|determined later|agency guidance|effective date)\b/i.test(sentence)).slice(0, 3);
+  if (passages.length) {
+    return passages.map((sentence) => {
+      const evidenceId = addEvidence(evidenceItems, page, {
+        claim: "Implementation or impact detail may remain unresolved.",
+        supportingText: sentence,
+        explanation: "This passage refers to funding, implementation, timing, or later decisions that may affect practical outcomes.",
+        confidenceScore: 52
+      });
+      return finding("Practical effects may depend on the cited funding, implementation, or timing detail.", [evidenceId], 52);
+    });
+  }
+  const noteId = addAnalysisNote(
+    evidenceItems,
+    page,
+    "Implementation impacts remain unverified.",
+    "No clear implementation, funding, enforcement, or effective-date passage was detected by the local parser.",
+    "The absence of a detected passage does not prove that the bill omits these details."
+  );
+  return [finding("Implementation and practical effects require review of the complete bill and related materials.", [noteId], 35)];
+}
+
+function importantTermFindings(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
+  return Object.entries(TERM_GLOSSARY)
+    .filter(([term]) => new RegExp(`\\b${term}\\b`, "i").test(page.text))
+    .slice(0, 5)
+    .map(([term, meaning]) => {
+      const evidenceId = addEvidence(evidenceItems, page, {
+        claim: `Plain-language definition for “${term}”.`,
+        supportingText: meaning,
+        explanation: "This definition is outside context from the official Congress.gov legislative glossary; verify how the bill uses the term.",
+        confidenceScore: 70,
+        kind: "outside_context",
+        sourceUrl: CONGRESS_GLOSSARY_URL,
+        sourceLabel: "Congress.gov legislative glossary"
+      });
+      return { ...finding(meaning, [evidenceId], 70), term, meaning };
+    });
 }
 
 function analyzeBill(page: ExtractedPage): BillAnalysis {
   const sentences = splitSentences(page.text);
-  const summarySentences = firstUsefulSentences(sentences, 2);
-  const changes = proposedChanges(page.text);
-  const groups = affectedGroups(page.text);
-  const terms = importantTerms(page.text);
-  const supporters = supportersOpponents(page.text, "support");
-  const opponents = supportersOpponents(page.text, "oppose");
-  const ev: EvidenceItem[] = [];
+  const evidenceItems: EvidenceItem[] = [];
+  const summary = summaryEvidence(page, evidenceItems, sentences);
+  const changes = proposedChangeFindings(page, evidenceItems, sentences);
+  const groups = affectedGroupFindings(page, evidenceItems, sentences);
+  const supporters = supporterOpponentFindings(page, evidenceItems, sentences, "support");
+  const opponents = supporterOpponentFindings(page, evidenceItems, sentences, "oppose");
+  const unclearImpacts = unclearImpactFindings(page, evidenceItems, sentences);
+  const terms = importantTermFindings(page, evidenceItems);
+  const mainIssue = mainIssueFinding(page, evidenceItems, sentences);
+  const confidenceScore = confidenceFor(page, evidenceItems);
 
-  if (summarySentences[0]) {
-    ev.push(
-      evidence(
-        "Plain-language bill summary is based on extracted bill text.",
-        summarySentences[0],
-        page.url,
-        "The opening bill text or metadata often states the bill's subject.",
-        76
-      )
-    );
-  }
-
-  if (changes[0]) {
-    ev.push(
-      evidence(
-        "Potential proposed change identified.",
-        changes[0],
-        page.url,
-        "Action verbs such as amend, require, authorize, or prohibit indicate what the bill may change.",
-        70
-      )
-    );
-  }
-
-  if (groups[0]) {
-    const sentence = findSentenceFor(page.text, new RegExp(`\\b${groups[0]}\\b`, "i"));
-    ev.push(
-      evidence(
-        `Potentially affected group mentioned: ${groups[0]}`,
-        sentence,
-        page.url,
-        "This group is mentioned in the bill text, but actual impact may require outside policy analysis.",
-        58
-      )
-    );
-  }
-
-  const confidenceScore = confidenceFor(page, ev.length);
   return {
     id: makeId("analysis"),
     url: page.url,
     pageTitle: page.title,
     sourceName: page.sourceName,
+    author: page.author,
+    publishedAt: page.publishedAt,
     contentType: "bill",
-    summary:
-      summarySentences.join(" ") ||
-      "The bill text could not be summarized confidently from the extracted page content.",
+    summary: summary.summary,
+    summaryEvidenceIds: summary.evidenceIds,
     confidenceScore,
-    confidenceReason:
-      confidenceScore < 50
-        ? "The extracted bill text was incomplete or did not include enough bill-specific language."
-        : "The analysis is based on extracted bill text and bill-specific action language.",
+    confidenceReason: "This local heuristic review uses extracted bill text and does not replace the complete bill, official status, or legal analysis.",
     createdAt: new Date().toISOString(),
-    evidence: ev,
+    evidence: evidenceItems,
     billNumber: billNumberFrom(page),
     billTitle: page.title || "Untitled bill",
-    plainLanguageSummary:
-      summarySentences.join(" ") ||
-      "This bill appears to require more complete source text before a reliable plain-language summary can be shown.",
-    mainIssue: inferMainIssue(page.title, sentences),
-    proposedChanges: changes.length ? changes : ["No clear proposed change was found in the extracted text."],
-    affectedGroups: groups.length ? groups : ["No affected groups were clear from the extracted text."],
+    plainLanguageSummary: summary.summary,
+    mainIssue,
+    proposedChanges: changes,
+    affectedGroups: groups,
     sourcedSupporters: supporters,
     sourcedOpponents: opponents,
-    unclearImpacts: [
-      "Practical effects may depend on implementation, funding, enforcement, or later agency guidance.",
-      "Supporters or opponents are only listed when the extracted text explicitly supports that claim."
-    ],
-    importantTerms: terms.length ? terms : [{ term: "No key terms found", meaning: "The extracted text did not include common legislative terms from the MVP glossary." }]
+    unclearImpacts,
+    importantTerms: terms
   };
 }
 
 export function classifyPastedText(text: string, url = ""): ContentType {
   if (looksLikeBillText(text, url)) return "bill";
-  if (text.trim().length < 400) return "unknown";
+  if (text.trim().length < 120) return "unknown";
   return "article";
 }
 
@@ -456,9 +540,6 @@ export function analyzePage(page: ExtractedPage): Analysis {
   if (contentType === "unsupported" || !page.text.trim()) {
     throw new Error("This page does not look like a supported article or Congress.gov bill. Open a specific story or bill, or paste the text manually.");
   }
-
   const normalizedPage = { ...page, contentType };
-
-  if (contentType === "bill") return analyzeBill(normalizedPage);
-  return analyzeArticle({ ...normalizedPage, contentType: "article" });
+  return contentType === "bill" ? analyzeBill(normalizedPage) : analyzeArticle({ ...normalizedPage, contentType: "article" });
 }

@@ -161,13 +161,18 @@ a {
 .choice-button:active,
 .icon-button:active,
 .tab-button:active {
-  transform: translateY(1px);
+  filter: brightness(0.96);
 }
 
 .content {
   display: grid;
   gap: 10px;
   padding: 10px;
+}
+
+[role="tabpanel"] {
+  display: grid;
+  gap: 10px;
 }
 
 .intro-panel,
@@ -244,6 +249,12 @@ a {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-subtle);
+}
+
+.content > .tabs {
+  position: sticky;
+  top: 66px;
+  z-index: 1;
 }
 
 .tab-button {
@@ -355,6 +366,25 @@ a {
   overflow-wrap: anywhere;
 }
 
+.finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.finding-meta a {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.is-low-confidence {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 7%, var(--surface));
+}
+
 .quote {
   margin: 0;
   padding-left: 10px;
@@ -366,7 +396,9 @@ a {
 }
 
 .warning-panel,
-.error-panel {
+.error-panel,
+.notice-panel,
+.privacy-note {
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -380,6 +412,27 @@ a {
 .error-panel {
   border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
   background: color-mix(in srgb, var(--bad) 10%, var(--surface));
+}
+
+.notice-panel {
+  border: 1px solid color-mix(in srgb, var(--good) 40%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--good) 8%, var(--surface));
+  color: var(--text);
+  font-size: 13px;
+}
+
+.privacy-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.privacy-note p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .form-grid {
@@ -433,6 +486,16 @@ a {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.optional {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.field-error {
+  color: var(--bad);
 }
 
 .actions {
@@ -507,6 +570,6 @@ a {
       background-color 160ms ease,
       border-color 160ms ease,
       color 160ms ease,
-      transform 120ms ease;
+      filter 120ms ease;
   }
 }

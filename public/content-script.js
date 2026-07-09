@@ -140,10 +140,33 @@ function extractReadableText() {
 }
 
 function sourceNameFromLocation() {
+  const siteName = cleanInline(metaContent('meta[property="og:site_name"], meta[name="application-name"]'));
+  if (siteName) return siteName;
   const host = location.hostname.replace(/^www\./, "");
   const parts = host.split(".");
   if (parts.length <= 2) return parts[0] || host;
-  return parts.slice(-3, -2)[0] || parts[0] || host;
+  const countryCodeSuffix = parts.at(-1)?.length === 2 && ["co", "com", "org", "net", "gov", "ac"].includes(parts.at(-2));
+  return (countryCodeSuffix ? parts.at(-3) : parts.at(-2)) || parts[0] || host;
+}
+
+function canonicalUrl() {
+  const value = document.querySelector('link[rel="canonical"]')?.href;
+  return /^https?:/.test(value || "") ? value : location.href;
+}
+
+function authorName() {
+  const value = cleanInline(
+    metaContent('meta[name="author"], meta[property="article:author"], meta[name="byl"]') ||
+      document.querySelector('[rel="author"], [itemprop="author"]')?.textContent
+  );
+  return /^https?:/i.test(value) ? "" : value.replace(/^by\s+/i, "");
+}
+
+function publishedAt() {
+  return cleanInline(
+    metaContent('meta[property="article:published_time"], meta[name="article:published_time"], meta[name="date"], meta[itemprop="datePublished"]') ||
+      document.querySelector('time[datetime]')?.getAttribute("datetime")
+  );
 }
 
 function collectLinks() {
@@ -183,8 +206,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const text = extractReadableText();
     const payload = {
       title: cleanInline(document.title) || "Untitled page",
-      url: location.href,
+      url: canonicalUrl(),
       sourceName: sourceNameFromLocation(),
+      author: authorName(),
+      publishedAt: publishedAt(),
       text,
       contentType: classify(location.href, text),
       links: collectLinks()
