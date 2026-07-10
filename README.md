@@ -1,47 +1,67 @@
 # Ellipsis
 
-Ellipsis is a lightweight Chrome side-panel extension for reviewing news articles and Congress.gov bills. It gives readers a short summary, three evidence-conditioned bias scales, and at most three things to inspect more closely.
+Ellipsis is a Chrome extension that helps you inspect how a news article or Congress.gov bill is written.
 
-The extension does not rate factuality or tell readers what to believe. A low score means few supported local cues were detected. It does not prove neutrality. A dimension remains **Not assessed** when the source does not contain enough direct evidence.
+It shows:
 
-## Run and test
+- a short summary;
+- possible political, gender, and ethnicity framing signals;
+- the exact passages behind its findings;
+- a few questions worth checking as you read.
 
-```sh
-npm install
-npm test
-npm run typecheck
-npm run build
-```
+Ellipsis is a reading aid. It does not decide whether a source is true, neutral, or trustworthy.
 
-Load the generated `dist/` folder from `chrome://extensions` with Developer mode enabled.
-After rebuilding an already loaded copy, click **Reload** on its extension card so Chrome refreshes the manifest name and browser-level icons.
+## Install
 
-The optional local model helper is documented in [`backend/README.md`](backend/README.md). The extension accepts only an explicit loopback HTTP endpoint, so article text cannot be configured to go to a remote backend.
+Ellipsis is not currently distributed through the Chrome Web Store. To install it from this repository:
 
-## Main flow
+1. Install [Node.js](https://nodejs.org/) 20.19 or newer.
+2. Download this repository and open its folder in a terminal.
+3. Run:
 
-1. Open a specific news article or Congress.gov bill and select **Analyze page**.
-2. Alternatively, paste a public link or source text.
-3. Review the summary, political/gender/ethnicity signal scales, and up to three evidence-linked checks.
-4. Open **Details** for the complete evidence and parser notes.
-5. Save useful results locally. History is capped at 50 items.
+   ```sh
+   npm install
+   npm run build
+   ```
 
-Link fetching is performed directly from the extension with credentials omitted. Full source text is analyzed in memory and is not saved. Explicitly saved results contain only short evidence excerpts.
+4. Open `chrome://extensions` in Chrome.
+5. Turn on **Developer mode**.
+6. Select **Load unpacked** and choose the generated `dist` folder.
+7. Pin Ellipsis from Chrome's Extensions menu if you want it in the toolbar.
 
-## Supported sources
+## Use
 
-- Specific English-language article pages with semantic article, main-content, or standard metadata markup.
-- Static public article URLs that expose readable HTML without login or paywall access.
-- Congress.gov bill pages and pasted federal bill text.
+1. Open a news article or Congress.gov bill.
+2. Select the Ellipsis icon in Chrome.
+3. Choose **Analyze page**.
+4. Read the summary and bias signals.
+5. Open **Details** to see the supporting passages and analysis notes.
 
-Home pages, search pages, protected browser pages, PDFs, login-only sources, client-rendered pages with no readable HTML, and state legislation are outside the current support boundary.
+You can also paste a public link or paste source text manually.
 
-## Method limits
+Saved analyses stay on your device. Ellipsis stores up to 50 saved items.
 
-- Scores represent the strength of detected wording or direct framing cues, not political ideology, factuality, intent, or outlet quality.
-- Political cues include loaded language, epistemic reporting verbs, and a small set of persuasion patterns.
-- Gender and ethnicity are assessed only when a group reference is directly paired with a stereotyped or hostile description in the same non-negated sentence.
-- Questions about omitted context depend on source genre. They are questions, not confirmed omissions.
-- Cross-document comparison, image analysis, outlet profiling, and external fact retrieval are research directions, not hidden features in this MVP.
+## Understanding the results
 
-See [`docs/methodology.md`](docs/methodology.md) for the research basis and validation plan.
+- **Low, moderate, or high** describes the strength of wording cues Ellipsis detected.
+- **Not assessed** means there was not enough direct evidence for that category.
+- A low score does not prove neutrality.
+- A high score does not prove that the source is false.
+
+Always read the cited passage in context before drawing a conclusion.
+
+## Privacy
+
+Ellipsis does not require an account. Analysis happens locally by default, and full article text is not added to saved history. Saved results contain only short excerpts needed to explain the analysis.
+
+## If a page cannot be analyzed
+
+Ellipsis cannot read some paywalled pages, PDFs, browser settings pages, login-only pages, or sites that hide their article text from extensions. Try one of these options:
+
+- reload the page and analyze it again;
+- paste the public link into Ellipsis;
+- use **Paste text instead**.
+
+After updating the extension, run `npm run build` again and select **Reload** for Ellipsis on `chrome://extensions`.
+
+For technical details, see the [methodology and validation plan](docs/methodology.md).
