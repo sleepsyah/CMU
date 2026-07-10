@@ -2,7 +2,7 @@
 
 ## Project
 
-Unframed is a lightweight Chrome Manifest V3 side-panel extension built with Astro, React, and TypeScript.
+Ellipsis is a lightweight Chrome Manifest V3 side-panel extension built with Astro, React, and TypeScript.
 
 ## Source of Truth
 

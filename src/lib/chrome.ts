@@ -23,16 +23,16 @@ export async function extractActivePage(): Promise<ExtractedPage> {
 
   let response;
   try {
-    response = await chrome.tabs.sendMessage(tab.id, { type: "UNFRAMED_EXTRACT_PAGE" });
+    response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_EXTRACT_PAGE" });
   } catch {
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content-script.js"] });
-      response = await chrome.tabs.sendMessage(tab.id, { type: "UNFRAMED_EXTRACT_PAGE" });
+      response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_EXTRACT_PAGE" });
     } catch {
       if (!siteAccessPattern(tab.url || "")) {
-        throw new Error("Unframed cannot read browser settings, extension pages, or other protected pages. Open a normal article or use Manual Paste.");
+        throw new Error("Ellipsis cannot read browser settings, extension pages, or other protected pages. Open a normal article or use Manual Paste.");
       }
-      throw new Error("This site blocked article extraction. Reload the page once after updating Unframed, then try again or use Manual Paste.");
+      throw new Error("This site blocked article extraction. Reload the page once after updating Ellipsis, then try again or use Manual Paste.");
     }
   }
   if (!response?.ok) {

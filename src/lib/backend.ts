@@ -9,7 +9,9 @@ import type {
   ExtractedPage
 } from "../types";
 
-const configuredBackendUrl = import.meta.env.PUBLIC_UNFRAMED_BACKEND_URL?.trim() || "";
+const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim()
+  || import.meta.env.PUBLIC_UNFRAMED_BACKEND_URL?.trim()
+  || "";
 const BACKEND_TIMEOUT_MS = 5_000;
 
 interface RawBiasMetric {
@@ -190,7 +192,7 @@ function buildBiasEvidence(analysis: Analysis, assessment: BackendBiasAnalysis):
       ? "Local heuristics were combined with a model running on this computer."
       : "Only evidence-linked heuristics running in the extension were used.",
     sourceUrl: null,
-    sourceLabel: "Unframed method note",
+    sourceLabel: "Ellipsis method note",
     kind: "analysis_note",
     explanation: "Scores estimate the strength of detected cues. A low score or an unassessed dimension does not prove neutrality, accuracy, or fair representation.",
     confidenceScore: 70,

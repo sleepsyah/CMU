@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-unframed is a 20-second critical-reading aid for college-level readers. It separates three requested dimensions:
+Ellipsis is a 20-second critical-reading aid for college-level readers. It separates three requested dimensions:
 
 - **Political wording and framing:** loaded language, epistemic reporting verbs, and selected persuasion patterns.
 - **Gender framing:** direct associations between gender references and stereotyped descriptions.
@@ -15,7 +15,7 @@ The scales estimate detected cue strength. They do not measure factuality, inten
 - [BABE](https://aclanthology.org/2021.findings-emnlp.101/) supports expert-annotated word- and sentence-level lexical bias detection. This is why the optional model is run on sentences and why the interface shows exact passages.
 - [Linguistic Models for Analyzing and Detecting Biased Language](https://aclanthology.org/P13-1162/) distinguishes framing and epistemological cues. This motivates checking loaded wording and reporting verbs separately.
 - [Fine-Grained Analysis of Propaganda in News Articles](https://aclanthology.org/D19-1565/) evaluates propaganda at the text-span level. This supports evidence-linked cue explanations rather than a document-only verdict.
-- [BASIL](https://aclanthology.org/D19-1664/) shows that informational bias can occur in factual text through selection and emphasis. Because a single source cannot prove omission, unframed presents genre-aware questions rather than omission claims.
+- [BASIL](https://aclanthology.org/D19-1664/) shows that informational bias can occur in factual text through selection and emphasis. Because a single source cannot prove omission, Ellipsis presents genre-aware questions rather than omission claims.
 - [Longitudinal racial and gender representation research](https://arxiv.org/abs/2410.21898) measures representation across large article collections. This is why the MVP does not infer demographic underrepresentation from a single article.
 
 ## Local scoring rules

@@ -1,6 +1,6 @@
-# Unframed
+# Ellipsis
 
-Unframed is a lightweight Chrome side-panel extension for reviewing news articles and Congress.gov bills. It gives readers a short summary, three evidence-conditioned bias scales, and at most three things to inspect more closely.
+Ellipsis is a lightweight Chrome side-panel extension for reviewing news articles and Congress.gov bills. It gives readers a short summary, three evidence-conditioned bias scales, and at most three things to inspect more closely.
 
 The extension does not rate factuality or tell readers what to believe. A low score means few supported local cues were detected. It does not prove neutrality. A dimension remains **Not assessed** when the source does not contain enough direct evidence.
 

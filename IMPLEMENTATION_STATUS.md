@@ -1,8 +1,8 @@
-# unframed implementation status
+# Ellipsis implementation status
 
 ## Current product
 
-unframed is a working local-first Chrome side-panel MVP for a roughly 20-second review of English news articles and Congress.gov bills.
+Ellipsis is a working local-first Chrome side-panel MVP for a roughly 20-second review of English news articles and Congress.gov bills.
 
 The primary result contains:
 

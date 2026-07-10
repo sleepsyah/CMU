@@ -1,2 +1,1 @@
-"""unframed bias backend package."""
-
+"""Ellipsis bias backend package."""

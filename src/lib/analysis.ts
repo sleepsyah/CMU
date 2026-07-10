@@ -163,7 +163,7 @@ function addAnalysisNote(items: EvidenceItem[], page: ExtractedPage, claim: stri
     confidenceScore: 35,
     kind: "analysis_note",
     sourceUrl: null,
-    sourceLabel: "Unframed analysis note"
+    sourceLabel: "Ellipsis analysis note"
   });
 }
 

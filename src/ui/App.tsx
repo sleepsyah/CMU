@@ -493,7 +493,7 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
 
       <div className="privacy-note">
         <strong>Private by default</strong>
-        <p>Analysis stays on this device. Link analysis requests the page directly. Article text is never sent to Unframed or a third-party AI. An optional model helper is accepted only on this computer.</p>
+        <p>Analysis stays on this device. Link analysis requests the page directly. Article text is never sent to Ellipsis or a third-party AI. An optional model helper is accepted only on this computer.</p>
       </div>
     </section>
   );
@@ -591,13 +591,13 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <span className="brand-lockup">
-          <img className="brand-icon" src="/icons/unframed-32.png" alt="" aria-hidden="true" />
-          <span className="brand-name">Unframed</span>
+          <img className="brand-icon" src="/icons/ellipsis-32.png" alt="" aria-hidden="true" />
+          <span className="brand-name">Ellipsis</span>
         </span>
         <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze page</button>
       </header>
       <div className="content">
-        <nav className="tabs" role="tablist" aria-label="Unframed sections">
+        <nav className="tabs" role="tablist" aria-label="Ellipsis sections">
           {tabs.map((tab) => (
             <button id={`tab-${tab.id}`} key={tab.id} className={`tab-button ${activeTab === tab.id ? "is-active" : ""}`} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={`panel-${tab.id}`} tabIndex={activeTab === tab.id ? 0 : -1} onKeyDown={(event) => moveTab(event, tab.id)} onClick={() => { setActiveTab(tab.id); setNotice(null); }}>{tab.icon}{tab.label}</button>
           ))}

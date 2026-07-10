@@ -215,7 +215,7 @@ function classify(url, text) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "UNFRAMED_EXTRACT_PAGE") return false;
+  if (message?.type !== "ELLIPSIS_EXTRACT_PAGE") return false;
 
   try {
     const text = extractReadableText();

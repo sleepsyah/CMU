@@ -1,4 +1,4 @@
-# Unframed local model helper
+# Ellipsis local model helper
 
 This optional FastAPI service combines local transformer outputs with the extension's evidence-linked heuristics. It is a development helper, not a hosted service.
 
@@ -24,7 +24,7 @@ python -m spacy download en_core_web_sm
 Build the extension with the helper URL explicitly set:
 
 ```sh
-PUBLIC_UNFRAMED_BACKEND_URL=http://127.0.0.1:8000 npm run build
+PUBLIC_ELLIPSIS_BACKEND_URL=http://127.0.0.1:8000 npm run build
 ```
 
 The frontend rejects non-loopback helper URLs. The helper has no remote LLM path.
