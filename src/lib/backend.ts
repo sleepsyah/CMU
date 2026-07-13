@@ -1,7 +1,11 @@
 import { analyzePage, cleanReadableSourceText, confidenceLabel } from "./analysis";
+import { enhanceAnalysisWithCodex } from "./ai";
 import type {
+  AiSettings,
   Analysis,
+  AnalysisTraceEvent,
   BackendBiasAnalysis,
+  BiasProfile,
   BiasDimension,
   BiasMetric,
   BiasSignal,
@@ -9,9 +13,7 @@ import type {
   ExtractedPage
 } from "../types";
 
-const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim()
-  || import.meta.env.PUBLIC_UNFRAMED_BACKEND_URL?.trim()
-  || "";
+const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim() || "";
 const BACKEND_TIMEOUT_MS = 5_000;
 
 interface RawBiasMetric {
@@ -101,20 +103,96 @@ const genderStereotypes = ["bossy", "emotional", "hysterical", "shrill", "weak",
 const ethnicityGroups = ["black", "white", "asian", "latino", "latina", "hispanic", "arab", "muslim", "jewish", "immigrant", "immigrants", "refugee", "refugees", "native american", "indigenous"];
 const hostileTerms = ["criminal", "criminals", "gang", "gangs", "violent", "terrorist", "terrorists", "lazy", "threat", "threats", "illegal", "invasion", "unqualified"];
 
-export async function analyzePageWithBackend(page: ExtractedPage): Promise<Analysis> {
+const persuasionPatterns: Array<{
+  label: string;
+  pattern: RegExp;
+  severity: BiasSignal["severity"];
+  explanation: string;
+  neutralAlternative: string;
+}> = [
+  {
+    label: "appeal to fear",
+    pattern: /\b(?:if (?:we|they|you) (?:do not|don't)|before it is too late|threatens? (?:our|the)|put(?:s|ting)? .{0,35} at risk)\b/i,
+    severity: 2,
+    explanation: "The sentence may use a feared consequence to increase urgency without fully establishing likelihood.",
+    neutralAlternative: "State the predicted consequence, supporting evidence, and uncertainty."
+  },
+  {
+    label: "black-and-white framing",
+    pattern: /\b(?:either .{0,60} or|only two choices|with us or against us|no alternative|only choice)\b/i,
+    severity: 3,
+    explanation: "The sentence may present a complex issue as having only two possible positions or outcomes.",
+    neutralAlternative: "Name the realistic alternatives and tradeoffs."
+  },
+  {
+    label: "bandwagon claim",
+    pattern: /\b(?:everyone knows|the whole country|all reasonable people|ordinary people all|nobody believes)\b/i,
+    severity: 2,
+    explanation: "The sentence may treat presumed popularity as evidence for a claim.",
+    neutralAlternative: "Cite a specific poll, sample, or attributed group."
+  },
+  {
+    label: "mind-reading claim",
+    pattern: /\b(?:really wants?|secretly hopes?|doesn't care|does not care|only cares about|intends? to destroy|wants? people to suffer)\b/i,
+    severity: 2,
+    explanation: "The sentence assigns an internal motive or reaction that may not be directly evidenced.",
+    neutralAlternative: "Attribute the motive to a source or describe observable conduct."
+  },
+  {
+    label: "causal oversimplification",
+    pattern: /\b(?:the reason is simple|caused entirely by|all because of|single cause|nothing more than)\b/i,
+    severity: 2,
+    explanation: "The sentence may reduce a multi-cause event to one explanation without showing competing factors.",
+    neutralAlternative: "Describe the supported contributing factors and their limits."
+  }
+];
+
+interface AnalysisOptions {
+  aiEnabled?: boolean;
+  aiSettings?: Pick<AiSettings, "enabled">;
+  traceId?: string;
+  onProgress?: (event: AnalysisTraceEvent) => void;
+}
+
+function trace(options: AnalysisOptions, event: Omit<AnalysisTraceEvent, "runId" | "at">) {
+  options.onProgress?.({
+    ...event,
+    runId: options.traceId || "",
+    at: new Date().toISOString()
+  });
+}
+
+export async function analyzePageWithBackend(page: ExtractedPage, options: AnalysisOptions = {}): Promise<Analysis> {
+  const sourceStartedAt = Date.now();
+  trace(options, { id: "gather-source", kind: "local", status: "running", title: "Gather source text", detail: "Extracting the readable article or bill text" });
   const readableText = cleanReadableSourceText(page.text);
+  trace(options, { id: "gather-source", kind: "local", status: "completed", title: "Gather source text", detail: `${readableText.length.toLocaleString()} characters ready`, durationMs: Date.now() - sourceStartedAt });
   const localAnalysis = analyzePage(page);
+  const aiEnabled = options.aiSettings?.enabled ?? options.aiEnabled ?? false;
+  let aiFailureReason: string | undefined;
+  if (aiEnabled) {
+    try {
+      const completed = await enhanceAnalysisWithCodex(localAnalysis, page, options.traceId);
+      trace(options, { id: "ai-analysis", kind: "runtime", status: "completed", title: "AI analysis", detail: `${completed.aiAnalysis?.factChecks?.length || 0} researched checks, ${completed.aiAnalysis?.addedSignalCount || 0} bias cues, ${completed.aiAnalysis?.addedFrameCount || 0} frames` });
+      return completed;
+    } catch (error) {
+      aiFailureReason = error instanceof Error ? error.message : "AI deep analysis did not complete.";
+      trace(options, { id: "ai-analysis", kind: "runtime", status: "failed", title: "AI analysis", detail: aiFailureReason });
+    }
+  }
+
   const localAssessment = localBiasAssessment(readableText);
   const localBackendUrl = isLoopbackBackendUrl(configuredBackendUrl) ? configuredBackendUrl : "";
-
-  if (!localBackendUrl) return attachBiasAssessment(localAnalysis, localAssessment);
-
-  try {
-    const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
-    return attachBiasAssessment(localAnalysis, mergeWithLocalBackend(localAssessment, backendPayload));
-  } catch {
-    return attachBiasAssessment(localAnalysis, localAssessment);
+  let analysis = attachBiasAssessment(localAnalysis, localAssessment);
+  if (localBackendUrl) {
+    try {
+      const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
+      analysis = attachBiasAssessment(localAnalysis, mergeWithLocalBackend(localAssessment, backendPayload));
+    } catch {
+      analysis = attachBiasAssessment(localAnalysis, localAssessment);
+    }
   }
+  return aiFailureReason ? { ...analysis, aiFailureReason } as Analysis : analysis;
 }
 
 export function isLoopbackBackendUrl(value: string) {
@@ -164,7 +242,24 @@ function attachBiasAssessment(analysis: Analysis, assessment: BackendBiasAnalysi
   );
   const biasEvidence = buildBiasEvidence(analysis, assessment)
     .filter((item) => item.kind !== "source_text" || !existingPassages.has(item.supportingText.trim().toLowerCase()));
-  return { ...analysis, backendBias: assessment, evidence: [...analysis.evidence, ...biasEvidence] } as Analysis;
+  return { ...analysis, backendBias: assessment, biasProfile: biasProfileFromAssessment(assessment), evidence: [...analysis.evidence, ...biasEvidence] } as Analysis;
+}
+
+export function biasProfileFromAssessment(assessment: BackendBiasAnalysis): BiasProfile {
+  const dimensions = [
+    { label: "political framing", metric: assessment.scores.political_bias },
+    { label: "gender framing", metric: assessment.scores.gender_bias },
+    { label: "ethnicity framing", metric: assessment.scores.ethnicity_bias }
+  ];
+  const assessed = dimensions.filter((item) => item.metric.status === "assessed" && item.metric.score !== null);
+  if (!assessed.length) return { score: 0, level: "minimal", summary: "No direct political, gender, or ethnicity framing cues were found in the extracted article." };
+  const weight = assessed.reduce((sum, item) => sum + Math.max(1, item.metric.evidenceCount), 0);
+  const score = Math.round(assessed.reduce((sum, item) => sum + ((item.metric.score || 0) * Math.max(1, item.metric.evidenceCount)), 0) / weight);
+  const level: BiasProfile["level"] = score < 20 ? "minimal" : score < 40 ? "low" : score < 70 ? "moderate" : "high";
+  const strongest = [...assessed].sort((left, right) => (right.metric.score || 0) - (left.metric.score || 0))[0];
+  const absent = dimensions.filter((item) => item.metric.status !== "assessed").map((item) => item.label.replace(" framing", ""));
+  const summary = `${level === "high" ? "Strong" : level === "moderate" ? "Moderate" : level === "low" ? "Limited" : "Minimal"} ${strongest.label} is the main detected pattern${absent.length ? `; no direct ${absent.join(" or ")} cues were found` : ""}.`;
+  return { score, level, summary };
 }
 
 function buildBiasEvidence(analysis: Analysis, assessment: BackendBiasAnalysis): EvidenceItem[] {
@@ -206,7 +301,7 @@ function mergeWithLocalBackend(local: BackendBiasAnalysis, backend: BackendPaylo
     if (metric.status === "insufficient-evidence" || metric.score === null) return metric;
     return {
       ...metric,
-      score: Math.round((metric.score * 0.45) + (clamp(modelMetric.score, 0, 100) * 0.55)),
+      score: Math.min(92, Math.round((metric.score * 0.45) + (clamp(modelMetric.score, 0, 100) * 0.55))),
       confidence: Math.min(0.78, Math.max(metric.confidence, clamp(modelMetric.confidence, 0, 1) * 0.8))
     };
   };
@@ -245,6 +340,21 @@ export function localBiasAssessment(text: string): BackendBiasAnalysis {
     if (!context) continue;
     signals.push(makeSignal("political", cue.category, cue.phrase, context, cue.explanation, cue.severity, cue.neutralAlternative));
     if (signals.filter((signal) => signal.dimension === "political").length >= 6) break;
+  }
+
+  for (const item of persuasionPatterns) {
+    const context = sentences.find((sentence) => item.pattern.test(sentence));
+    if (!context) continue;
+    signals.push(makeSignal(
+      "political",
+      "persuasion",
+      item.label,
+      context,
+      item.explanation,
+      item.severity,
+      item.neutralAlternative
+    ));
+    if (signals.filter((signal) => signal.dimension === "political").length >= 8) break;
   }
 
   const genderPattern = associationPattern(genderGroups, genderStereotypes, 45);
@@ -308,7 +418,7 @@ function scoreSignals(signals: BiasSignal[]): BiasMetric {
   }
   const severity = signals.reduce((sum, signal) => sum + signal.severity, 0);
   return {
-    score: Math.min(100, 14 + (severity * 9) + ((signals.length - 1) * 4)),
+    score: Math.min(92, 14 + (severity * 9) + ((signals.length - 1) * 4)),
     confidence: Math.min(0.62, 0.44 + (signals.length * 0.04)),
     evidenceCount: signals.length,
     status: "assessed"

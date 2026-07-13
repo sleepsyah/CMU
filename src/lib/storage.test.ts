@@ -39,5 +39,6 @@ describe("saved-analysis migration", () => {
     expect(migrated.analysis.framingNotes[0].confidenceLabel).toBe("Low");
     expect(migrated.analysis.loadedLanguageExamples[0].phrase).toBe("crisis");
     expect(migrated.analysis.genre).toBe("general");
+    expect(migrated.analysis.framingProfile.dominantFrames).toEqual([]);
   });
 });

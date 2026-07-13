@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "astro dev --host 127.0.0.1",
     "build": "astro build",
+    "native:install": "node native-host/install.mjs",
+    "native:uninstall": "node native-host/install.mjs --uninstall",
+    "native:status": "node native-host/host.mjs --request status",
+    "native:package:mac": "node native-host/package-macos.mjs",
     "preview": "astro preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
@@ -13,8 +17,10 @@
   },
   "dependencies": {
     "@astrojs/react": "^6.0.1",
+    "@openai/codex-sdk": "0.144.1",
     "@phosphor-icons/react": "^2.1.10",
     "astro": "^7.0.6",
+    "motion": "^12.42.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

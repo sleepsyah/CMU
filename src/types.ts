@@ -5,6 +5,22 @@ export type EvidenceKind = "source_text" | "outside_context" | "analysis_note";
 export type ArticleGenre = "event" | "opinion" | "data_report" | "explainer" | "investigation" | "general";
 export type BiasDimension = "political" | "gender" | "ethnicity";
 export type BiasMetricStatus = "assessed" | "insufficient-evidence";
+export type FrameLabel =
+  | "Economic"
+  | "Capacity and resources"
+  | "Morality"
+  | "Fairness and equality"
+  | "Legality and constitutionality"
+  | "Policy prescription and evaluation"
+  | "Crime and punishment"
+  | "Security and defense"
+  | "Health and safety"
+  | "Quality of life"
+  | "Cultural identity"
+  | "Public opinion"
+  | "Political"
+  | "External regulation and reputation"
+  | "Other";
 
 export interface ExtractedPage {
   title: string;
@@ -54,6 +70,96 @@ export interface BiasSignal {
   severity: 1 | 2 | 3;
 }
 
+export interface FrameSignal {
+  id: string;
+  label: FrameLabel;
+  strength: number;
+  explanation: string;
+  evidenceIds: string[];
+  source: "heuristic" | "local-codex";
+}
+
+export interface FramingProfile {
+  dominantFrames: FrameSignal[];
+  namedSourceCount: number;
+  attributedPerspectiveCount: number;
+  reviewQuestions: AnalysisFinding[];
+}
+
+export type FactCheckStatus = "supported" | "contradicted" | "unresolved" | "context_needed";
+
+export interface FactCheck {
+  id: string;
+  claim: string;
+  status: FactCheckStatus;
+  explanation: string;
+  sourceText: string;
+  citations: Array<{
+    url: string;
+    label: string;
+    evidence: string;
+  }>;
+}
+
+export interface AiAnalysis {
+  source: "local-codex";
+  model: "gpt-5.5";
+  reasoningEffort: "low";
+  summaryEvidenceIds: string[];
+  confidenceScore: number;
+  confidenceReason: string;
+  addedSignalCount: number;
+  addedFrameCount: number;
+  addedFindingCount: number;
+  outsideContextCount: number;
+  reasoningSummaryCount: number;
+  runtimeMs: number;
+  summaryRefined: boolean;
+  webSearchCount: number;
+  outputSummary?: string;
+  factChecks?: FactCheck[];
+  researchSourceCount?: number;
+  reasoningSummaries?: string[];
+  webSearchQueries?: string[];
+  analyzedAt: string;
+}
+
+export type AnalysisTraceKind = "local" | "plan" | "reasoning" | "tool" | "validation" | "runtime";
+export type AnalysisTraceStatus = "pending" | "running" | "completed" | "failed";
+
+export interface AnalysisTraceEvent {
+  runId: string;
+  id: string;
+  kind: AnalysisTraceKind;
+  status: AnalysisTraceStatus;
+  title: string;
+  detail?: string;
+  at: string;
+  startedAt?: string;
+  parentId?: string;
+  durationMs?: number;
+}
+
+export interface AiSettings {
+  enabled: boolean;
+  connectionVerifiedAt: string | null;
+}
+
+export interface CodexConnectionStatus {
+  providerStatus: "ready" | "needs_auth" | "unavailable";
+  providerMessage: string;
+  model: "gpt-5.5";
+  reasoningEffort: "low";
+  runtime: string;
+  checkedAt: string;
+}
+
+export interface CodexLoginResult {
+  status: CodexConnectionStatus;
+  authUrl?: string;
+  loginId?: string | null;
+}
+
 export interface TargetDependentAsymmetry {
   target: string;
   associated_verbs: string[];
@@ -75,7 +181,13 @@ export interface BackendBiasAnalysis {
     missing_perspectives: string[];
     stereotypical_associations: string[];
   };
-  source: "hybrid-backend" | "local-heuristic" | "local-fallback";
+  source: "hybrid-backend" | "local-heuristic" | "local-fallback" | "codex-enhanced";
+}
+
+export interface BiasProfile {
+  score: number;
+  level: "minimal" | "low" | "moderate" | "high";
+  summary: string;
 }
 
 export interface BaseAnalysis {
@@ -93,6 +205,9 @@ export interface BaseAnalysis {
   createdAt: string;
   evidence: EvidenceItem[];
   backendBias?: BackendBiasAnalysis;
+  biasProfile?: BiasProfile;
+  aiAnalysis?: AiAnalysis;
+  aiFailureReason?: string;
 }
 
 export interface ArticleAnalysis extends BaseAnalysis {
@@ -104,6 +219,7 @@ export interface ArticleAnalysis extends BaseAnalysis {
   quotedPeopleOrGroups: AnalysisFinding[];
   includedPerspectives: AnalysisFinding[];
   missingPerspectives: AnalysisFinding[];
+  framingProfile: FramingProfile;
 }
 
 export interface BillAnalysis extends BaseAnalysis {

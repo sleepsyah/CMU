@@ -1,39 +1,55 @@
 import {
+  ArrowClockwise,
+  Brain,
+  CheckCircle,
   ClockCounterClockwise,
+  Cpu,
   FileText,
   FloppyDisk,
+  GearSix,
+  GlobeSimple,
   Info,
   LinkSimple,
   MagnifyingGlass,
+  ShieldCheck,
   Trash,
-  WarningCircle
+  WarningCircle,
+  X
 } from "@phosphor-icons/react";
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { classifyPastedText, confidenceLabel, keyFindingsFor } from "../lib/analysis";
-import { analyzePageWithBackend } from "../lib/backend";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { classifyPastedText } from "../lib/analysis";
+import { beginCodexLogin, checkCodexConnection, subscribeCodexProgress } from "../lib/ai";
+import { analyzePageWithBackend, biasProfileFromAssessment } from "../lib/backend";
 import { createManualPage, extractActivePage } from "../lib/chrome";
 import {
   clearFeedbackLogs,
   clearSavedAnalyses,
   deleteSavedAnalysis,
+  getAiSettings,
   getSavedAnalyses,
   logFeedback,
+  saveAiSettings,
   saveAnalysis
 } from "../lib/storage";
 import { fetchPageFromUrl, normalizeWebUrl } from "../lib/url";
 import type {
   Analysis,
   AnalysisFinding,
+  AnalysisTraceEvent,
+  AiSettings,
   ArticleGenre,
   BackendBiasAnalysis,
-  BiasDimension,
-  BiasMetric,
   BillAnalysis,
+  CodexConnectionStatus,
+  CodexLoginResult,
   ContentType,
+  ExtractedPage,
+  FactCheckStatus,
   FeedbackType,
   SavedAnalysis
 } from "../types";
+import { BiasProfileBand, BiasSignalChart, FramingBars } from "./components/InsightCharts";
 
 type Tab = "analysis" | "saved" | "details";
 
@@ -70,62 +86,120 @@ function toSavedAnalysis(analysis: Analysis): SavedAnalysis {
   };
 }
 
-function firstEvidence(analysis: Analysis, finding: AnalysisFinding) {
-  return finding.evidenceIds
-    .map((id) => analysis.evidence.find((item) => item.id === id))
-    .find((item) => item?.kind === "source_text");
+function formatRuntime(milliseconds: number) {
+  if (milliseconds < 1_000) return `${milliseconds}ms`;
+  return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
 }
 
-function primaryFindingsFor(analysis: Analysis) {
-  const findings: Array<{ text: string; context?: string }> = [];
-  const seenDimensions = new Set<BiasDimension>();
-  for (const signal of analysis.backendBias?.linguistic_evidence.signals || []) {
-    if (seenDimensions.has(signal.dimension)) continue;
-    seenDimensions.add(signal.dimension);
-    findings.push({
-      text: signal.dimension === "political"
-        ? `Political wording cue: “${signal.phrase}” may add emotional or evaluative force.`
-        : `${dimensionTitle(signal.dimension)} cue: “${signal.phrase}” is directly associated with a group reference.`,
-      context: signal.context
-    });
-  }
-
-  for (const finding of keyFindingsFor(analysis)) {
-    const evidence = firstEvidence(analysis, finding);
-    const context = evidence?.supportingText;
-    if (findings.some((item) => item.text === finding.text || (context && item.context === context))) continue;
-    findings.push({ text: finding.text, context });
-    if (findings.length >= 3) break;
-  }
-  return findings.slice(0, 3);
+function RuntimeTimer({ startedAt }: { startedAt: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const update = () => { if (ref.current) ref.current.textContent = formatRuntime(Date.now() - startedAt); };
+    update();
+    const interval = window.setInterval(update, 250);
+    return () => window.clearInterval(interval);
+  }, [startedAt]);
+  return <span ref={ref} className="tabular-number">0ms</span>;
 }
 
-function LoadingState() {
+function TraceIcon({ event }: { event: AnalysisTraceEvent }) {
+  if (event.status === "failed") return <WarningCircle size={15} />;
+  if (event.kind === "reasoning") return <Brain size={15} />;
+  if (event.kind === "tool") return <GlobeSimple size={15} />;
+  if (event.id === "agent-output") return <FileText size={15} />;
+  if (event.id === "codex-retry") return <ArrowClockwise size={15} />;
+  if (event.status === "completed") return <CheckCircle size={15} weight="fill" />;
+  return <Cpu size={15} />;
+}
+
+function TraceList({ trace }: { trace: AnalysisTraceEvent[] }) {
+  const fixedOrder: Record<string, number> = {
+    "gather-source": 10,
+    "ai-analysis": 20,
+    "codex-retry": 70,
+    "agent-output": 90
+  };
+  const orderedTrace = [...trace].sort((left, right) => {
+    const leftOrder = fixedOrder[left.id] ?? 50;
+    const rightOrder = fixedOrder[right.id] ?? 50;
+    return leftOrder - rightOrder || left.at.localeCompare(right.at);
+  });
   return (
-    <section className="surface loading-state" aria-live="polite">
-      <div className="skeleton wide" />
-      <div className="skeleton medium" />
-      <div className="skeleton short" />
-      <p className="helper">Reading the source and linking signals to evidence.</p>
+    <ol className="trace-list">
+      {orderedTrace.map((event) => (
+        <li className={`trace-row is-${event.status} is-${event.kind} ${event.parentId ? "is-child" : "is-runtime"}`} key={event.id}>
+          <span className="trace-icon"><TraceIcon event={event} /></span>
+          <div>
+            <p><strong>{event.title}</strong>{!event.parentId && event.status === "running" && <RuntimeTimer startedAt={new Date(event.startedAt || event.at).getTime()} />}{!event.parentId && event.durationMs !== undefined && <span>{formatRuntime(event.durationMs)}</span>}</p>
+            {event.detail && <p className="trace-detail">{event.detail}</p>}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function LoadingState({ aiEnabled, trace }: { aiEnabled: boolean; trace: AnalysisTraceEvent[] }) {
+  return (
+    <section className="surface loading-state analysis-trace" aria-live="polite">
+      <header className="trace-header">
+        <div><strong>Analyzing source</strong><span>{aiEnabled ? "Gathering text, researching claims, and producing the AI analysis" : "Gathering text and producing the local analysis"}</span></div>
+      </header>
+      <TraceList trace={trace} />
     </section>
   );
 }
 
-function MetricRow({ title, metric }: { title: string; metric: BiasMetric }) {
-  const assessed = metric.status === "assessed" && metric.score !== null;
-  const score = assessed ? Math.round(metric.score as number) : null;
-  const strength = score === null ? "No direct cues found" : score < 34 ? "Low detected signal" : score < 67 ? "Moderate detected signal" : "High detected signal";
-  const evidenceLabel = metric.evidenceCount === 1 ? "1 cited passage" : `${metric.evidenceCount} cited passages`;
-  const tone = score === null ? "neutral" : score < 34 ? "low" : score < 67 ? "moderate" : "high";
+function factCheckLabel(status: FactCheckStatus) {
+  if (status === "supported") return "Supported";
+  if (status === "contradicted") return "Contradicted";
+  if (status === "context_needed") return "Needs context";
+  return "Unresolved";
+}
 
+function savedAiTrace(analysis: Analysis): AnalysisTraceEvent[] {
+  const ai = analysis.aiAnalysis;
+  if (!ai) return [];
+  const at = ai.analyzedAt;
+  return [
+    { runId: analysis.id, id: "ai-analysis", kind: "runtime", status: "completed", title: "AI analysis", detail: "Research and analysis complete", at, durationMs: ai.runtimeMs },
+    ...(ai.reasoningSummaries || []).map((detail, index): AnalysisTraceEvent => ({ runId: analysis.id, id: `saved-reasoning-${index}`, parentId: "ai-analysis", kind: "reasoning", status: "completed", title: "Reasoning summary", detail, at })),
+    ...(ai.webSearchQueries || []).map((detail, index): AnalysisTraceEvent => ({ runId: analysis.id, id: `saved-search-${index}`, parentId: "ai-analysis", kind: "tool", status: "completed", title: "Web search", detail, at })),
+    { runId: analysis.id, id: "agent-output", parentId: "ai-analysis", kind: "runtime", status: "completed", title: "Agent output", detail: ai.outputSummary || analysis.summary, at }
+  ];
+}
+
+function AiDetailsDisclosure({ analysis, trace }: { analysis: Analysis; trace: AnalysisTraceEvent[] }) {
+  const ai = analysis.aiAnalysis;
+  const currentAiActivity = trace.filter((event) => event.id === "ai-analysis" || event.parentId === "ai-analysis");
+  const activity = currentAiActivity.length ? currentAiActivity : savedAiTrace(analysis);
+  if (!ai && !activity.length) return null;
+  const checks = ai?.factChecks || [];
   return (
-    <div className="metric-row">
-      <div>
-        <span className="metric-name">{title}</span>
-        <span className={`metric-detail is-${tone}`}>{strength}{score === null ? "" : ` · ${evidenceLabel}`}</span>
+    <details className="disclosure ai-details-disclosure">
+      <summary>AI analysis and research</summary>
+      <div className="disclosure-body">
+        {ai ? <p className="ai-output-summary">{ai.outputSummary || analysis.summary}</p> : <p className="helper">The AI run did not complete. The local fallback result is shown.</p>}
+        {checks.length > 0 && (
+          <div className="fact-checks">
+            <div className="subsection-heading"><h3>Researched claim checks</h3><span>{ai?.researchSourceCount || 0} sources</span></div>
+            <ul>
+              {checks.map((check) => (
+                <li key={check.id}>
+                  <div className="fact-check-heading"><span className={`fact-status is-${check.status}`}>{factCheckLabel(check.status)}</span><strong>{check.claim}</strong></div>
+                  <blockquote>{check.sourceText}</blockquote>
+                  <p>{check.explanation}</p>
+                  <div className="fact-citations">
+                    {check.citations.map((citation) => <a href={citation.url} target="_blank" rel="noreferrer" key={citation.url}><LinkSimple size={12} />{citation.label}<span>{citation.evidence}</span></a>)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {activity.length > 0 && <div className="ai-activity"><h3>Agent activity</h3><TraceList trace={activity} /></div>}
       </div>
-      <span className={`metric-score is-${tone}`}>{score === null ? "Not assessed" : `${score} / 100`}</span>
-    </div>
+    </details>
   );
 }
 
@@ -135,30 +209,41 @@ function BiasSummary({ assessment }: { assessment?: BackendBiasAnalysis }) {
     <section className="surface result-section">
       <div className="section-heading">
         <h2>Bias signals</h2>
-        <p>Direct wording cues by category. These scores do not rate factual accuracy.</p>
+        <p>Evidence-conditioned wording and association cues. These are not factuality ratings.</p>
       </div>
-      <div className="metric-list">
-        <MetricRow title="Political" metric={assessment.scores.political_bias} />
-        <MetricRow title="Gender" metric={assessment.scores.gender_bias} />
-        <MetricRow title="Ethnicity" metric={assessment.scores.ethnicity_bias} />
-      </div>
+      <BiasSignalChart assessment={assessment} />
     </section>
   );
 }
 
-function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: Analysis; onNewAnalysis: () => void; onSaveAnalysis: () => void }) {
+function AnalysisView({
+  analysis,
+  aiEnabled,
+  aiConnection,
+  canReanalyze,
+  onNewAnalysis,
+  onSaveAnalysis,
+  onOpenAiSettings,
+  onRetryAi
+}: {
+  analysis: Analysis;
+  aiEnabled: boolean;
+  aiConnection: CodexConnectionStatus | null;
+  canReanalyze: boolean;
+  onNewAnalysis: () => void;
+  onSaveAnalysis: () => void;
+  onOpenAiSettings: () => void;
+  onRetryAi: () => void;
+}) {
   const sourceIsLink = /^https?:\/\//.test(analysis.url);
-  const keyFindings = primaryFindingsFor(analysis);
+  const biasProfile = analysis.biasProfile || (analysis.backendBias ? biasProfileFromAssessment(analysis.backendBias) : {
+    score: 0,
+    level: "minimal" as const,
+    summary: "No direct bias evidence was found in the analyzed article text."
+  });
 
   return (
     <div className="result-stack">
-      {analysis.confidenceScore < 50 && (
-        <div className="warning-panel" role="status">
-          <strong>Limited extraction</strong>
-          <p>Use the cited passages as reading prompts, not verified conclusions.</p>
-        </div>
-      )}
-
       <section className="surface source-summary">
         <div className="source-heading">
           <div>
@@ -167,7 +252,7 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
               <span>{analysis.sourceName}</span>
               <span>{contentLabel(analysis.contentType)}</span>
               {analysis.contentType === "article" && <span>{genreLabel(analysis.genre || "general")}</span>}
-              <span>Confidence: {confidenceLabel(analysis.confidenceScore)}</span>
+              <span>{analysis.aiAnalysis ? "AI analysis" : "Local analysis"}</span>
             </p>
           </div>
         </div>
@@ -177,33 +262,26 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
           <button className="secondary-button" type="button" onClick={onNewAnalysis}>New</button>
           {sourceIsLink && <a className="text-link" href={analysis.url} target="_blank" rel="noreferrer"><LinkSimple size={15} /> Source</a>}
         </div>
+        <BiasProfileBand profile={biasProfile} />
+        {aiEnabled && !analysis.aiAnalysis && (
+          <>
+            <div className="ai-result-status" role="status">
+              <div>
+                <WarningCircle size={16} />
+                <span><strong>Local result shown</strong><small>{analysis.aiFailureReason || aiConnection?.providerMessage || "AI deep analysis did not complete."}</small></span>
+              </div>
+              <div>
+                <button className="text-button" type="button" onClick={onOpenAiSettings}><GearSix size={14} /> Settings</button>
+                {canReanalyze && <button className="text-button" type="button" onClick={onRetryAi}><ArrowClockwise size={14} /> Retry</button>}
+              </div>
+            </div>
+          </>
+        )}
       </section>
 
       <BiasSummary assessment={analysis.backendBias} />
 
-      <section className="surface result-section">
-        <div className="section-heading">
-          <h2>What to notice</h2>
-          <p>Up to three evidence-linked prompts from this source.</p>
-        </div>
-        {keyFindings.length ? (
-          <ol className="key-findings">
-            {keyFindings.map((finding, index) => {
-              const repeatsFinding = finding.context?.trim().toLowerCase() === finding.text.trim().toLowerCase();
-              return (
-                <li key={`${finding.text}-${index}`}>
-                  <p>{finding.text}</p>
-                  {finding.context && !repeatsFinding && <blockquote>{finding.context}</blockquote>}
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <p className="helper">No strong local signal was detected. This is not a neutrality rating.</p>
-        )}
-      </section>
-
-      <p className="result-note">Open Details for full evidence, confidence, and parser notes.</p>
+      <p className="result-note">Open Details for research, framing, and source evidence.</p>
     </div>
   );
 }
@@ -257,17 +335,37 @@ function EvidenceList({ analysis }: { analysis: Analysis }) {
     const key = `${item.kind}:${item.supportingText.trim().toLowerCase()}`;
     if (!unique.has(key)) unique.set(key, item);
   }
+  const items = Array.from(unique.values());
+  const groups = [
+    { kind: "source_text", title: "Source evidence", description: "Exact passages from the analyzed page." },
+    { kind: "outside_context", title: "Outside context", description: "Cited web context retrieved separately. It is not used as a direct source-text bias cue." },
+    { kind: "analysis_note", title: "Analysis notes", description: "Method and uncertainty notes created by Ellipsis." }
+  ] as const;
   return (
-    <ul className="evidence-list">
-      {Array.from(unique.values()).map((item) => (
-        <li key={item.id}>
-          <strong>{item.claim}</strong>
-          <blockquote>{item.supportingText}</blockquote>
-          <p>{item.explanation}</p>
-          <span>{item.kind === "source_text" ? "Source text" : item.kind === "outside_context" ? "Outside context" : "Analysis note"} · {item.confidenceLabel} confidence</span>
-        </li>
-      ))}
-    </ul>
+    <div className="evidence-groups">
+      {groups.map((group) => {
+        const groupedItems = items.filter((item) => item.kind === group.kind);
+        if (!groupedItems.length) return null;
+        return (
+          <section key={group.kind}>
+            <header><h3>{group.title}</h3><p>{group.description}</p></header>
+            <ul className="evidence-list">
+              {groupedItems.map((item) => (
+                <li key={item.id}>
+                  <strong>{item.claim}</strong>
+                  <blockquote>{item.supportingText}</blockquote>
+                  <p>{item.explanation}</p>
+                  {item.kind === "outside_context" && item.sourceUrl && (
+                    <a className="evidence-source-link" href={item.sourceUrl} target="_blank" rel="noreferrer"><LinkSimple size={13} />Open context source</a>
+                  )}
+                  <span>{group.title} · {item.confidenceLabel} confidence</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
@@ -333,58 +431,42 @@ function FeedbackDisclosure({ analysis }: { analysis: Analysis }) {
   );
 }
 
-function DetailsView({ analysis }: { analysis: Analysis | null }) {
+function DetailsView({ analysis, trace }: { analysis: Analysis | null; trace: AnalysisTraceEvent[] }) {
   if (!analysis) return <section className="surface empty-state"><Info size={22} /><p>Analyze a source to inspect evidence and method details.</p></section>;
-  const signals = analysis.backendBias?.linguistic_evidence.signals || [];
   return (
     <section className="surface details-view">
       <div className="details-intro">
         <h1>Analysis details</h1>
-        <p>{analysis.confidenceReason}</p>
-        <dl>
-          <div><dt>Overall confidence</dt><dd>{analysis.confidenceScore}%</dd></div>
-          <div><dt>Analysis mode</dt><dd>{analysis.backendBias?.source === "hybrid-backend" ? "Local model + heuristics" : "On-device heuristics"}</dd></div>
-          <div><dt>Saved text</dt><dd>Only excerpts in a saved result</dd></div>
-        </dl>
       </div>
 
-      <details className="disclosure" open>
-        <summary>Bias signal evidence ({signals.length})</summary>
-        <div className="disclosure-body">
-          {signals.length ? (
-            <ul className="signal-list">
-              {signals.map((signal) => (
-                <li key={signal.id}>
-                  <strong>{dimensionTitle(signal.dimension)}: “{signal.phrase}”</strong>
-                  <blockquote>{signal.context}</blockquote>
-                  <p>{signal.explanation}</p>
-                  {signal.neutralAlternative && <p><strong>Check:</strong> {signal.neutralAlternative}</p>}
-                </li>
-              ))}
-            </ul>
-          ) : <p className="helper">No direct wording or stereotype association met the local evidence threshold.</p>}
-        </div>
-      </details>
+      <AiDetailsDisclosure analysis={analysis} trace={trace} />
+
+      {analysis.contentType === "article" && (
+        <details className="disclosure">
+          <summary>Framing profile ({analysis.framingProfile.dominantFrames.length})</summary>
+          <div className="disclosure-body">
+            <FramingBars frames={analysis.framingProfile.dominantFrames} />
+            <div className="source-composition">
+              <span><strong>{analysis.framingProfile.namedSourceCount}</strong> named sources</span>
+              <span><strong>{analysis.framingProfile.attributedPerspectiveCount}</strong> attributed perspectives</span>
+            </div>
+          </div>
+        </details>
+      )}
 
       <details className="disclosure">
-        <summary>Full source breakdown</summary>
+        <summary>Source breakdown</summary>
         <div className="disclosure-body"><SourceBreakdown analysis={analysis} /></div>
       </details>
 
       <details className="disclosure">
-        <summary>Evidence and parser notes ({analysis.evidence.length})</summary>
+        <summary>Evidence ({analysis.evidence.length})</summary>
         <div className="disclosure-body"><EvidenceList analysis={analysis} /></div>
       </details>
 
       <FeedbackDisclosure analysis={analysis} />
     </section>
   );
-}
-
-function dimensionTitle(dimension: BiasDimension) {
-  if (dimension === "gender") return "Gender framing";
-  if (dimension === "ethnicity") return "Ethnicity framing";
-  return "Political wording";
 }
 
 function HistoryView({ saved, onOpen, onDelete, onClear }: { saved: SavedAnalysis[]; onOpen: (analysis: Analysis) => void; onDelete: (id: string) => void; onClear: () => void }) {
@@ -411,6 +493,170 @@ function HistoryView({ saved, onOpen, onDelete, onClear }: { saved: SavedAnalysi
         <div className="empty-state"><ClockCounterClockwise size={22} /><p>Save an analysis to build a private reading history.</p></div>
       )}
     </section>
+  );
+}
+
+function PersistentAiControl({ enabled, connection, onToggle, onOpenSettings }: {
+  enabled: boolean;
+  connection: CodexConnectionStatus | null;
+  onToggle: (enabled: boolean) => void;
+  onOpenSettings: () => void;
+}) {
+  const state = !enabled ? "off" : connection?.providerStatus === "ready" ? "ready" : "attention";
+  return (
+    <div className={`persistent-ai is-${state}`}>
+      <label className="compact-switch" title="Use AI deep analysis">
+        <Cpu size={15} />
+        <span>AI</span>
+        <input type="checkbox" role="switch" aria-label="Use AI deep analysis" checked={enabled} onChange={(event) => onToggle(event.target.checked)} />
+        <i aria-hidden="true" />
+      </label>
+      <button className="topbar-icon-button" type="button" aria-label="Open AI settings" title="AI settings" onClick={onOpenSettings}><GearSix size={16} /></button>
+    </div>
+  );
+}
+
+function AiSettingsDialog({
+  open,
+  settings,
+  connection,
+  suggestEnabled,
+  onClose,
+  onConnect,
+  onTest,
+  onSave
+}: {
+  open: boolean;
+  settings: AiSettings;
+  connection: CodexConnectionStatus | null;
+  suggestEnabled: boolean;
+  onClose: () => void;
+  onConnect: () => Promise<CodexLoginResult>;
+  onTest: () => Promise<CodexConnectionStatus>;
+  onSave: (settings: AiSettings) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(settings);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [waitingForAuth, setWaitingForAuth] = useState(false);
+  const [status, setStatus] = useState<CodexConnectionStatus | null>(connection);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft({ ...settings, enabled: suggestEnabled || settings.enabled });
+    setStatus(connection);
+    setWaitingForAuth(false);
+    setFormError(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !waitingForAuth) return;
+    let checking = false;
+    const interval = window.setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      const next = await onTest();
+      setStatus(next);
+      if (next.providerStatus === "ready") {
+        setWaitingForAuth(false);
+        const verified = { ...draft, enabled: true, connectionVerifiedAt: next.checkedAt };
+        setDraft(verified);
+        const saved = await onSave(verified);
+        if (saved) onClose();
+        else setFormError("Codex signed in, but Ellipsis could not enable AI deep analysis.");
+      }
+      checking = false;
+    }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [open, waitingForAuth]);
+
+  if (!open) return null;
+
+  async function connectCodex() {
+    setTesting(true);
+    setFormError(null);
+    try {
+      const result = await onConnect();
+      setStatus(result.status);
+      if (result.status.providerStatus === "ready") {
+        const verified = { ...draft, enabled: true, connectionVerifiedAt: result.status.checkedAt };
+        setDraft(verified);
+        const saved = await onSave(verified);
+        if (saved) onClose();
+        else setFormError("Codex connected, but Ellipsis could not enable AI deep analysis.");
+      } else if (result.authUrl) {
+        if (typeof chrome !== "undefined" && chrome.tabs?.create) await chrome.tabs.create({ url: result.authUrl });
+        else window.open(result.authUrl, "_blank", "noopener,noreferrer");
+        setWaitingForAuth(true);
+      }
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Codex connection failed.");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setFormError(null);
+    const saved = await onSave(draft);
+    setSaving(false);
+    if (saved) onClose();
+    else setFormError("Connect Codex before enabling AI deep analysis.");
+  }
+
+  return (
+    <div className="settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title">
+        <header className="settings-header">
+          <div><GearSix size={17} /><strong id="ai-settings-title">AI settings</strong></div>
+          <button className="topbar-icon-button" type="button" aria-label="Close AI settings" onClick={onClose}><X size={17} /></button>
+        </header>
+        <form className="settings-form" onSubmit={saveSettings}>
+          <fieldset className="mode-options">
+            <legend>Analysis mode</legend>
+            <label className={draft.enabled ? "is-selected" : ""}>
+              <input type="radio" name="analysis-mode" checked={draft.enabled} onChange={() => setDraft((current) => ({ ...current, enabled: true }))} />
+              <span><strong>AI deep analysis</strong><small>Codex research, cited claim checks, and deeper framing across the complete result.</small></span>
+            </label>
+            <label className={!draft.enabled ? "is-selected" : ""}>
+              <input type="radio" name="analysis-mode" checked={!draft.enabled} onChange={() => setDraft((current) => ({ ...current, enabled: false }))} />
+              <span><strong>Local analysis only</strong><small>Summaries and evidence checks work without Codex.</small></span>
+            </label>
+          </fieldset>
+
+          {draft.enabled && (
+            <div className="connection-settings">
+              <div className="managed-note"><Cpu size={17} /><span><strong>Native Codex connection</strong><small>Chrome launches the installed Ellipsis connector when needed. There is no server command, port, hosted proxy, or extension API key.</small></span></div>
+              <dl className="runtime-settings">
+                <div><dt>Model</dt><dd>GPT-5.5</dd></div>
+                <div><dt>Reasoning</dt><dd>Low</dd></div>
+                <div><dt>Activity</dt><dd>Detailed reasoning summaries</dd></div>
+                <div><dt>Tools</dt><dd>Built-in web search only</dd></div>
+                <div><dt>Connection</dt><dd>Chrome Native Messaging</dd></div>
+                <div><dt>Data scope</dt><dd>Source text and cited web context</dd></div>
+              </dl>
+              <div className="connection-test">
+                <button className="secondary-button" type="button" onClick={() => void connectCodex()} disabled={testing || waitingForAuth}>{testing ? "Connecting..." : waitingForAuth ? "Waiting for sign in" : status?.providerStatus === "ready" ? "Check again" : "Connect Codex"}</button>
+                <p className={status?.providerStatus === "ready" ? "is-ready" : ""}>{waitingForAuth ? "Finish signing in in the opened tab. Ellipsis will detect the connection automatically." : status?.providerMessage || "Press Connect Codex. Chrome starts Codex app-server and enables AI when the connection succeeds."}</p>
+              </div>
+              {status?.providerStatus === "unavailable" && (
+                <p className="connection-help">The Ellipsis AI Connector is missing or could not start. Install the connector package once, reopen Chrome, and press Connect Codex.</p>
+              )}
+              <div className="data-boundary"><ShieldCheck size={17} /><p>When AI is on, the connector sends the extracted source to Codex. Codex usually runs one to three focused searches to check material claims; cited research stays separate from source evidence. Local analysis remains available if AI fails.</p></div>
+            </div>
+          )}
+
+          {formError && <div className="settings-error" role="alert"><WarningCircle size={16} /><span>{formError}</span></div>}
+          <footer className="settings-footer">
+            <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
+            <button className="primary-button" type="submit" disabled={saving || (draft.enabled && status?.providerStatus !== "ready")}>{saving ? "Saving..." : draft.enabled ? "Save and use AI" : "Use local analysis"}</button>
+          </footer>
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -491,10 +737,6 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
         </form>
       </details>
 
-      <div className="privacy-note">
-        <strong>Private by default</strong>
-        <p>Analysis stays on this device. Link analysis requests the page directly. Article text is never sent to Ellipsis or a third-party AI. An optional model helper is accepted only on this computer.</p>
-      </div>
     </section>
   );
 }
@@ -506,23 +748,133 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [aiSettings, setAiSettings] = useState<AiSettings>({ enabled: false, connectionVerifiedAt: null });
+  const [aiConnection, setAiConnection] = useState<CodexConnectionStatus | null>(null);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [suggestAiEnabled, setSuggestAiEnabled] = useState(false);
+  const [sourcePage, setSourcePage] = useState<ExtractedPage | null>(null);
+  const [analysisTrace, setAnalysisTrace] = useState<AnalysisTraceEvent[]>([]);
+  const activeTraceId = useRef<string | null>(null);
+  const analysisInFlight = useRef(false);
+
+  function updateTrace(event: AnalysisTraceEvent) {
+    if (event.runId && activeTraceId.current !== event.runId) return;
+    setAnalysisTrace((current) => {
+      const index = current.findIndex((item) => item.id === event.id);
+      if (index < 0) return [...current, { ...event, startedAt: event.startedAt || (event.status === "running" ? event.at : undefined) }];
+      const next = [...current];
+      next[index] = {
+        ...next[index],
+        ...event,
+        startedAt: next[index].startedAt || event.startedAt || (event.status === "running" ? event.at : undefined)
+      };
+      return next;
+    });
+  }
+
+  useEffect(() => subscribeCodexProgress(updateTrace), []);
 
   useEffect(() => { getSavedAnalyses().then(setSaved).catch(() => setError("Saved history could not be loaded.")); }, []);
+  useEffect(() => {
+    getAiSettings().then((settings) => {
+      setAiSettings(settings);
+      if (settings.enabled) void refreshAiConnection();
+    }).catch(() => undefined);
+  }, []);
 
-  async function analyze(pagePromise: Promise<ReturnType<typeof createManualPage>>) {
-    setLoading(true);
+  async function refreshAiConnection(): Promise<CodexConnectionStatus> {
+    let status: CodexConnectionStatus;
+    try {
+      status = await checkCodexConnection();
+    } catch (error) {
+      status = { providerStatus: "unavailable", providerMessage: error instanceof Error ? error.message : "Ellipsis AI Connector is unavailable.", model: "gpt-5.5", reasoningEffort: "low", runtime: "Codex app-server", checkedAt: new Date().toISOString() };
+    }
+    setAiConnection(status);
+    return status;
+  }
+
+  async function connectAi(): Promise<CodexLoginResult> {
+    try {
+      const result = await beginCodexLogin();
+      setAiConnection(result.status);
+      return result;
+    } catch (error) {
+      const status: CodexConnectionStatus = { providerStatus: "unavailable", providerMessage: error instanceof Error ? error.message : "Ellipsis AI Connector is unavailable.", model: "gpt-5.5", reasoningEffort: "low", runtime: "Codex app-server", checkedAt: new Date().toISOString() };
+      setAiConnection(status);
+      return { status };
+    }
+  }
+
+  function openAiSettings(suggestEnabled = false) {
+    setSuggestAiEnabled(suggestEnabled);
+    setAiSettingsOpen(true);
+  }
+
+  async function analyzeExtractedPage(page: ExtractedPage, settings = aiSettings) {
+    const traceId = `analysis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    activeTraceId.current = traceId;
+    setAnalysisTrace([
+      { runId: traceId, id: "gather-source", kind: "local", status: "pending", title: "Gather source text", at: new Date().toISOString() },
+      ...(settings.enabled ? [{ runId: traceId, id: "ai-analysis", kind: "runtime" as const, status: "pending" as const, title: "AI analysis", at: new Date().toISOString() }] : [])
+    ]);
     setError(null);
     setNotice(null);
     try {
-      const page = await pagePromise;
       if (page.text.trim().length < 120) throw new Error("The readable text was too short. Try the link option or paste the source text.");
-      setAnalysis(await analyzePageWithBackend(page));
+      const next = await analyzePageWithBackend(page, { aiSettings: settings, traceId, onProgress: updateTrace });
+      setAnalysis(next);
+      if (settings.enabled && !next.aiAnalysis) setNotice("AI deep analysis did not complete. The full local result is shown, and AI settings remain available above.");
       setActiveTab("analysis");
     } catch (event) {
       setError(event instanceof Error ? event.message : "Analysis failed.");
     } finally {
+      activeTraceId.current = null;
+    }
+  }
+
+  async function analyze(pagePromise: Promise<ReturnType<typeof createManualPage>>, settings = aiSettings) {
+    if (analysisInFlight.current) return;
+    analysisInFlight.current = true;
+    setLoading(true);
+    try {
+      const page = await pagePromise;
+      setSourcePage(page);
+      await analyzeExtractedPage(page, settings);
+    } catch (event) {
+      setError(event instanceof Error ? event.message : "Analysis failed.");
+    } finally {
+      analysisInFlight.current = false;
       setLoading(false);
     }
+  }
+
+  async function applyAiSettings(next: AiSettings, verifiedStatus?: CodexConnectionStatus) {
+    let settings = { ...next };
+    if (settings.enabled) {
+      const status = verifiedStatus?.providerStatus === "ready" ? verifiedStatus : await refreshAiConnection();
+      if (status.providerStatus !== "ready") return false;
+      settings = { ...settings, connectionVerifiedAt: status.checkedAt };
+    }
+    setAiSettings(settings);
+    await saveAiSettings(settings);
+    setNotice(settings.enabled ? "AI deep analysis is on." : "Local analysis mode is on.");
+    if (sourcePage) await analyze(Promise.resolve(sourcePage), settings);
+    return true;
+  }
+
+  function toggleAi(enabled: boolean) {
+    if (!enabled) {
+      void applyAiSettings({ ...aiSettings, enabled: false });
+      return;
+    }
+    void (async () => {
+      const status = aiConnection?.providerStatus === "ready" ? aiConnection : await refreshAiConnection();
+      if (status.providerStatus === "ready") {
+        await applyAiSettings({ enabled: true, connectionVerifiedAt: status.checkedAt }, status);
+      } else {
+        openAiSettings(true);
+      }
+    })();
   }
 
   function runPageAnalysis() {
@@ -594,7 +946,10 @@ export default function App() {
           <img className="brand-icon" src="/icons/ellipsis-32.png" alt="" aria-hidden="true" />
           <span className="brand-name">Ellipsis</span>
         </span>
-        <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze page</button>
+        <div className="topbar-actions">
+          <PersistentAiControl enabled={aiSettings.enabled} connection={aiConnection} onToggle={toggleAi} onOpenSettings={() => openAiSettings(false)} />
+          <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze</button>
+        </div>
       </header>
       <div className="content">
         <nav className="tabs" role="tablist" aria-label="Ellipsis sections">
@@ -604,16 +959,17 @@ export default function App() {
         </nav>
         {error && activeTab === "analysis" && <div className="error-panel" role="alert"><strong><WarningCircle size={16} /> Issue</strong><p>{error}</p></div>}
         {notice && <div className="notice-panel" role="status">{notice}</div>}
-        {loading ? <LoadingState /> : (
+        {loading ? <LoadingState aiEnabled={aiSettings.enabled} trace={analysisTrace} /> : (
           <section id={`panel-${activeTab}`} role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
             {activeTab === "analysis" && (analysis
-              ? <AnalysisView analysis={analysis} onSaveAnalysis={saveCurrentAnalysis} onNewAnalysis={() => { setAnalysis(null); setError(null); setNotice(null); }} />
+              ? <AnalysisView analysis={analysis} aiEnabled={aiSettings.enabled} aiConnection={aiConnection} canReanalyze={Boolean(sourcePage)} onSaveAnalysis={saveCurrentAnalysis} onOpenAiSettings={() => openAiSettings(false)} onRetryAi={() => { if (sourcePage) void analyze(Promise.resolve(sourcePage)); }} onNewAnalysis={() => { setAnalysis(null); setSourcePage(null); setAnalysisTrace([]); setError(null); setNotice(null); }} />
               : <StartView loading={loading} onAnalyzePage={runPageAnalysis} onAnalyzeUrl={runUrlAnalysis} onAnalyzeText={runManualAnalysis} />)}
-            {activeTab === "saved" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setActiveTab("analysis"); }} onDelete={removeSaved} onClear={clearHistory} />}
-            {activeTab === "details" && <DetailsView analysis={analysis} />}
+            {activeTab === "saved" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setSourcePage(null); setAnalysisTrace([]); setActiveTab("analysis"); }} onDelete={removeSaved} onClear={clearHistory} />}
+            {activeTab === "details" && <DetailsView analysis={analysis} trace={analysisTrace} />}
           </section>
         )}
       </div>
+      <AiSettingsDialog open={aiSettingsOpen} settings={aiSettings} connection={aiConnection} suggestEnabled={suggestAiEnabled} onClose={() => { setAiSettingsOpen(false); setSuggestAiEnabled(false); }} onConnect={connectAi} onTest={refreshAiConnection} onSave={applyAiSettings} />
     </main>
   );
 }

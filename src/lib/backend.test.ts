@@ -38,6 +38,17 @@ describe("evidence-linked bias scales", () => {
     expect(result.scores.political_bias.evidenceCount).toBeGreaterThan(0);
     expect(result.linguistic_evidence.signals.every((signal) => signal.context.length > 0)).toBe(true);
   });
+
+  it("detects research-backed persuasion patterns without turning them into verdicts", () => {
+    const result = localBiasAssessment(
+      "The columnist wrote that the governor secretly hopes the program will fail and that there is no alternative to immediate repeal. The article later quotes the budget office's projection."
+    );
+
+    const persuasion = result.linguistic_evidence.signals.filter((signal) => signal.category === "persuasion");
+    expect(persuasion.map((signal) => signal.phrase)).toContain("mind-reading claim");
+    expect(persuasion.map((signal) => signal.phrase)).toContain("black-and-white framing");
+    expect(persuasion.every((signal) => signal.neutralAlternative)).toBe(true);
+  });
 });
 
 describe("local helper privacy boundary", () => {

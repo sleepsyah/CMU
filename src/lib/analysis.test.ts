@@ -59,6 +59,29 @@ describe("article analysis", () => {
     expect(ids.every((id) => knownIds.has(id))).toBe(true);
   });
 
+  it("builds a concise summary from representative details instead of copying the opening paragraph", () => {
+    const opening =
+      "The governor directed the transportation commissioner to oversee an investigation into repeated rail delays, according to three officials familiar with the decision.";
+    const analysis = analyzePage(
+      page({
+        title: "Governor orders investigation into rail delays",
+        text: [
+          opening,
+          "The review began after signal failures stranded thousands of riders during the morning commute.",
+          "Transit records show that maintenance vacancies doubled over the previous year and delayed scheduled inspections.",
+          "The agency said it will publish preliminary findings next month and has not yet estimated the cost of repairs."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toMatch(/^The article reports that /);
+    expect(analysis.summary).not.toBe(`${opening} The review began after signal failures stranded thousands of riders during the morning commute.`);
+    expect(analysis.summary).not.toContain("...");
+    expect(analysis.summaryEvidenceIds).toHaveLength(2);
+    expect(analysis.summaryEvidenceIds.every((id) => analysis.evidence.some((item) => item.id === id))).toBe(true);
+  });
+
   it("uses genre-aware review questions instead of default supporter and opponent prompts", () => {
     const analysis = analyzePage(
       page({
@@ -83,6 +106,22 @@ describe("article analysis", () => {
     );
 
     expect(keyFindingsFor(analysis).length).toBeLessThanOrEqual(3);
+  });
+
+  it("builds a multi-label framing profile with source-linked evidence", () => {
+    const analysis = analyzePage(
+      page({
+        text:
+          "The city council approved a housing policy after debating costs, funding, and the supply of available apartments. Tenant advocates said the plan would improve quality of life, while budget officials questioned whether the city had enough staff and resources to implement it. A court challenge could determine whether the rule is lawful."
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    const labels = analysis.framingProfile.dominantFrames.map((frame) => frame.label);
+    expect(labels).toContain("Economic");
+    expect(labels).toContain("Capacity and resources");
+    const knownIds = new Set(analysis.evidence.map((item) => item.id));
+    expect(analysis.framingProfile.dominantFrames.flatMap((frame) => frame.evidenceIds).every((id) => knownIds.has(id))).toBe(true);
   });
 });
 

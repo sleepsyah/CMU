@@ -1,7 +1,11 @@
-import type { Analysis, AnalysisFinding, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis } from "../types";
+import type { AiSettings, Analysis, AnalysisFinding, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis } from "../types";
 
-const HISTORY_KEY = "unframed.savedAnalyses";
-const FEEDBACK_KEY = "unframed.feedbackLogs";
+const HISTORY_KEY = "ellipsis.savedAnalyses";
+const FEEDBACK_KEY = "ellipsis.feedbackLogs";
+const AI_SETTINGS_KEY = "ellipsis.aiSettings";
+const LEGACY_STORAGE_PREFIX = ["un", "framed"].join("");
+const LEGACY_HISTORY_KEY = `${LEGACY_STORAGE_PREFIX}.savedAnalyses`;
+const LEGACY_FEEDBACK_KEY = `${LEGACY_STORAGE_PREFIX}.feedbackLogs`;
 const MAX_HISTORY = 50;
 
 function confidenceLabel(score: number): ConfidenceLabel {
@@ -93,7 +97,13 @@ export function migrateSavedAnalysis(value: SavedAnalysis): SavedAnalysis | null
         })),
         quotedPeopleOrGroups: (legacy.quotedPeopleOrGroups || []).map(migrateFinding),
         includedPerspectives: (legacy.includedPerspectives || []).map(migrateFinding),
-        missingPerspectives: (legacy.missingPerspectives || []).map(migrateFinding)
+        missingPerspectives: (legacy.missingPerspectives || []).map(migrateFinding),
+        framingProfile: legacy.framingProfile || {
+          dominantFrames: [],
+          namedSourceCount: (legacy.quotedPeopleOrGroups || []).length,
+          attributedPerspectiveCount: (legacy.includedPerspectives || []).length,
+          reviewQuestions: (legacy.missingPerspectives || []).map(migrateFinding)
+        }
       }
     : {
         ...common,
@@ -136,8 +146,17 @@ async function writeValue<T>(key: string, value: T): Promise<void> {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
+async function readMigratedValue<T>(key: string, legacyKey: string, fallback: T): Promise<T> {
+  const current = await readValue<T | null>(key, null);
+  if (current !== null) return current;
+  const legacy = await readValue<T | null>(legacyKey, null);
+  if (legacy === null) return fallback;
+  await writeValue(key, legacy);
+  return legacy;
+}
+
 export async function getSavedAnalyses() {
-  const saved = await readValue<SavedAnalysis[]>(HISTORY_KEY, []);
+  const saved = await readMigratedValue<SavedAnalysis[]>(HISTORY_KEY, LEGACY_HISTORY_KEY, []);
   return saved.map(migrateSavedAnalysis).filter((item): item is SavedAnalysis => Boolean(item));
 }
 
@@ -167,7 +186,7 @@ export async function clearSavedAnalyses() {
 }
 
 export async function getFeedbackLogs() {
-  return readValue<FeedbackLog[]>(FEEDBACK_KEY, []);
+  return readMigratedValue<FeedbackLog[]>(FEEDBACK_KEY, LEGACY_FEEDBACK_KEY, []);
 }
 
 export async function clearFeedbackLogs() {
@@ -180,4 +199,36 @@ export async function logFeedback(feedback: FeedbackLog) {
   const next = [feedback, ...current].slice(0, 250);
   await writeValue(FEEDBACK_KEY, next);
   return next;
+}
+
+export async function getAiSettings(): Promise<AiSettings> {
+  let value = await readValue<Partial<AiSettings> | null>(AI_SETTINGS_KEY, null);
+  if (!value) {
+    if (hasChromeStorage()) {
+      const stored = await chrome.storage.local.get(null);
+      const migrated = Object.entries(stored).find(([key, item]) => key !== AI_SETTINGS_KEY && key.endsWith(".aiSettings") && typeof item === "object" && item !== null)?.[1] as Partial<AiSettings> | undefined;
+      value = migrated || null;
+    } else {
+      for (let index = 0; index < window.localStorage.length && !value; index += 1) {
+        const key = window.localStorage.key(index);
+        if (!key || key === AI_SETTINGS_KEY || !key.endsWith(".aiSettings")) continue;
+        const raw = window.localStorage.getItem(key);
+        if (raw) value = JSON.parse(raw) as Partial<AiSettings>;
+      }
+    }
+    if (value) await writeValue(AI_SETTINGS_KEY, value);
+  }
+  return {
+    enabled: value?.enabled === true,
+    connectionVerifiedAt: typeof value?.connectionVerifiedAt === "string" ? value.connectionVerifiedAt : null
+  };
+}
+
+export async function saveAiSettings(settings: AiSettings): Promise<AiSettings> {
+  const value = {
+    enabled: settings.enabled === true,
+    connectionVerifiedAt: settings.connectionVerifiedAt || null
+  };
+  await writeValue(AI_SETTINGS_KEY, value);
+  return value;
 }

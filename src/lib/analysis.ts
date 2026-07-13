@@ -8,7 +8,9 @@ import type {
   ContentType,
   EvidenceItem,
   EvidenceKind,
-  ExtractedPage
+  ExtractedPage,
+  FrameLabel,
+  FramingProfile
 } from "../types";
 
 const LOADED_TERMS = [
@@ -28,6 +30,41 @@ const LOADED_TERMS = [
   "secretive",
   "slam",
   "blasted"
+];
+
+export const FRAME_LABELS: FrameLabel[] = [
+  "Economic",
+  "Capacity and resources",
+  "Morality",
+  "Fairness and equality",
+  "Legality and constitutionality",
+  "Policy prescription and evaluation",
+  "Crime and punishment",
+  "Security and defense",
+  "Health and safety",
+  "Quality of life",
+  "Cultural identity",
+  "Public opinion",
+  "Political",
+  "External regulation and reputation",
+  "Other"
+];
+
+const FRAME_PATTERNS: Array<{ label: Exclude<FrameLabel, "Other">; pattern: RegExp; explanation: string }> = [
+  { label: "Economic", pattern: /\b(cost|price|budget|tax|jobs?|wages?|economic|market|funding|spending|revenue)\b/i, explanation: "The source emphasizes financial costs, benefits, markets, labor, or public spending." },
+  { label: "Capacity and resources", pattern: /\b(capacity|resources?|staffing|infrastructure|supply|shortage|implementation|feasibility)\b/i, explanation: "The source emphasizes whether institutions have the resources or ability to act." },
+  { label: "Morality", pattern: /\b(moral|immoral|values?|ethical|duty|right thing|wrong|sin|responsibility)\b/i, explanation: "The source emphasizes values, duty, ethics, or moral judgment." },
+  { label: "Fairness and equality", pattern: /\b(fair|unfair|equal|equality|equity|discriminat|rights?|justice|inequality)\b/i, explanation: "The source emphasizes distribution, fairness, equal treatment, or rights." },
+  { label: "Legality and constitutionality", pattern: /\b(legal|illegal|lawful|unlawful|constitutional|court|judge|statute|jurisdiction|ruling)\b/i, explanation: "The source emphasizes legal authority, constitutionality, or judicial interpretation." },
+  { label: "Policy prescription and evaluation", pattern: /\b(policy|proposal|plan|solution|reform|effective|ineffective|should|must|recommend)\b/i, explanation: "The source evaluates a policy response or argues for a course of action." },
+  { label: "Crime and punishment", pattern: /\b(crime|criminal|arrest|police|prosecut|prison|sentence|punishment|offense|victim)\b/i, explanation: "The source emphasizes crime, enforcement, accountability, or punishment." },
+  { label: "Security and defense", pattern: /\b(security|defense|military|war|attack|threat|border|terror|intelligence|national security)\b/i, explanation: "The source emphasizes safety from external or organized threats." },
+  { label: "Health and safety", pattern: /\b(health|medical|patient|disease|hospital|safety|risk|injury|death|public health)\b/i, explanation: "The source emphasizes physical health, safety, harm, or prevention." },
+  { label: "Quality of life", pattern: /\b(quality of life|housing|education|school|family|community|wellbeing|daily life|standard of living)\b/i, explanation: "The source emphasizes everyday wellbeing, services, family, or community life." },
+  { label: "Cultural identity", pattern: /\b(culture|identity|tradition|religion|heritage|language|community values|way of life)\b/i, explanation: "The source emphasizes group identity, culture, tradition, or belonging." },
+  { label: "Public opinion", pattern: /\b(poll|survey|voters?|public opinion|approval|disapproval|popular|unpopular|supporters?|opponents?)\b/i, explanation: "The source emphasizes public attitudes, polling, or perceived support." },
+  { label: "Political", pattern: /\b(election|campaign|party|democrat|republican|parliament|congress|political|administration|lawmaker)\b/i, explanation: "The source emphasizes political actors, competition, institutions, or strategy." },
+  { label: "External regulation and reputation", pattern: /\b(international|foreign|global|treaty|sanction|reputation|allies|diplomatic|regulation|oversight)\b/i, explanation: "The source emphasizes outside regulation, international pressure, or reputation." }
 ];
 
 const CONGRESS_GLOSSARY_URL = "https://www.congress.gov/help/legislative-glossary";
@@ -181,6 +218,67 @@ function firstUsefulSentences(page: ExtractedPage, sentences: string[], count: n
   return (withoutTitle.length ? withoutTitle : useful).slice(0, count);
 }
 
+const SUMMARY_STOPWORDS = new Set([
+  "about", "after", "again", "against", "also", "among", "because", "been", "before", "being", "between", "could", "from", "have",
+  "into", "more", "most", "other", "over", "said", "says", "some", "such", "than", "that", "their", "them", "then", "there", "these",
+  "they", "this", "those", "through", "under", "very", "were", "what", "when", "where", "which", "while", "will", "with", "would"
+]);
+
+function summaryTokens(value: string) {
+  return (value.toLowerCase().match(/[a-z][a-z'-]{2,}/g) || []).filter((token) => !SUMMARY_STOPWORDS.has(token));
+}
+
+function rankedSummarySentences(page: ExtractedPage, sentences: string[], count: number) {
+  const useful = firstUsefulSentences(page, sentences, sentences.length);
+  if (useful.length <= count) return useful;
+
+  const titleTokens = new Set(summaryTokens(page.title));
+  const frequency = new Map<string, number>();
+  useful.forEach((sentence) => {
+    new Set(summaryTokens(sentence)).forEach((token) => frequency.set(token, (frequency.get(token) || 0) + 1));
+  });
+
+  const ranked = useful
+    .map((sentence, index) => {
+      const tokens = summaryTokens(sentence);
+      const uniqueTokens = new Set(tokens);
+      const centrality = [...uniqueTokens].reduce((total, token) => total + Math.min(frequency.get(token) || 0, 4), 0) / Math.max(uniqueTokens.size, 1);
+      const titleOverlap = [...uniqueTokens].filter((token) => titleTokens.has(token)).length;
+      const positionSignal = index === 0 ? 1.2 : Math.max(0, 0.65 - index * 0.07);
+      const detailSignal = /\b(?:according to|announced|approved|directed|found|reported|would|will|could|because|after|before|result|investigation)\b/i.test(sentence) ? 0.45 : 0;
+      const lengthPenalty = sentence.length < 55 ? 0.8 : sentence.length > 420 ? 0.5 : 0;
+      return { sentence, index, tokens: uniqueTokens, score: centrality + titleOverlap * 0.7 + positionSignal + detailSignal - lengthPenalty };
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+
+  const selected: typeof ranked = [];
+  for (const candidate of ranked) {
+    const repeatsSelected = selected.some((existing) => {
+      const shared = [...candidate.tokens].filter((token) => existing.tokens.has(token)).length;
+      return shared / Math.max(Math.min(candidate.tokens.size, existing.tokens.size), 1) > 0.72;
+    });
+    if (!repeatsSelected) selected.push(candidate);
+    if (selected.length === count) break;
+  }
+
+  return (selected.length ? selected : ranked.slice(0, count))
+    .sort((a, b) => a.index - b.index)
+    .map((candidate) => candidate.sentence);
+}
+
+function conciseSummaryClause(sentence: string) {
+  const normalized = normalizeWhitespace(sentence);
+  const naturalClause = normalized.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
+  if (naturalClause.length <= 240) return naturalClause.replace(/[,:;]$/, "");
+
+  const punctuation = Math.max(naturalClause.lastIndexOf(",", 240), naturalClause.lastIndexOf(";", 240));
+  return punctuation >= 100 ? naturalClause.slice(0, punctuation).trim() : naturalClause;
+}
+
+function lowerSentenceLead(value: string) {
+  return /^[A-Z][a-z]/.test(value) ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+}
+
 function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
   const directEvidence = evidenceItems.filter((item) => item.kind === "source_text").length;
   const analysisNotes = evidenceItems.filter((item) => item.kind === "analysis_note").length;
@@ -199,18 +297,23 @@ function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
 }
 
 function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[]) {
-  const summarySentences = firstUsefulSentences(page, sentences, 2);
+  const summarySentences = rankedSummarySentences(page, sentences, 2);
   if (!summarySentences.length) return { summary: "The extracted text was not complete enough to summarize.", evidenceIds: [] };
   const evidenceIds = summarySentences.map((sentence) =>
     addEvidence(evidenceItems, page, {
       claim: "Source passage used in the short summary.",
       supportingText: sentence,
-      explanation: "This passage was selected from the opening substantive source text. It is not independently verified.",
+      explanation: "This representative passage was selected from the extracted source text. It is not independently verified.",
       confidenceScore: 62
     })
   );
-  const combined = summarySentences.join(" ");
-  const summary = combined.length > 360 ? `${combined.slice(0, 357).trimEnd()}...` : combined;
+  const clauses = summarySentences.map(conciseSummaryClause).filter(Boolean);
+  const [first, ...rest] = clauses;
+  const lead = page.contentType === "bill" ? "The source explains that" : "The article reports that";
+  const summary = [
+    `${lead} ${lowerSentenceLead(first).replace(/[.!?]+$/, "")}.`,
+    ...rest.map((clause) => `It also notes that ${lowerSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
+  ].join(" ");
   return { summary, evidenceIds };
 }
 
@@ -412,6 +515,49 @@ function framingFindings(
   return results;
 }
 
+function framingProfileFor(
+  page: ExtractedPage,
+  evidenceItems: EvidenceItem[],
+  sentences: string[],
+  quoted: ReturnType<typeof quotedSources>,
+  included: AnalysisFinding[],
+  reviewQuestions: AnalysisFinding[]
+): FramingProfile {
+  const candidates = FRAME_PATTERNS.map((frame) => {
+    const matches = sentences.filter((sentence) => frame.pattern.test(sentence)).slice(0, 4);
+    const distinctTerms = new Set(matches.flatMap((sentence) => sentence.toLowerCase().match(frame.pattern) || []));
+    return { ...frame, matches, weight: matches.length + distinctTerms.size };
+  })
+    .filter((frame) => frame.matches.length > 0)
+    .sort((a, b) => b.weight - a.weight || FRAME_LABELS.indexOf(a.label) - FRAME_LABELS.indexOf(b.label))
+    .slice(0, 4);
+
+  const dominantFrames = candidates.map((frame) => {
+    const passage = frame.matches[0];
+    const evidenceId = addEvidence(evidenceItems, page, {
+      claim: `Potential ${frame.label.toLowerCase()} frame.`,
+      supportingText: passage,
+      explanation: `${frame.explanation} A frame describes emphasis, not whether the article is correct or politically aligned.`,
+      confidenceScore: 55
+    });
+    return {
+      id: makeId("frame"),
+      label: frame.label,
+      strength: clamp(28 + (frame.matches.length * 12) + (Math.min(frame.weight, 5) * 4), 32, 84),
+      explanation: frame.explanation,
+      evidenceIds: [evidenceId],
+      source: "heuristic" as const
+    };
+  });
+
+  return {
+    dominantFrames,
+    namedSourceCount: quoted.length,
+    attributedPerspectiveCount: included.length,
+    reviewQuestions
+  };
+}
+
 function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
   const sentences = splitSentences(page.text);
   const evidenceItems: EvidenceItem[] = [];
@@ -423,6 +569,7 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
   const genre = inferArticleGenre(page);
   const missing = missingPerspectiveFindings(page, evidenceItems, included, quoted, genre);
   const framingNotes = framingFindings(page, evidenceItems, loaded, included, quoted);
+  const framingProfile = framingProfileFor(page, evidenceItems, sentences, quoted, included, missing);
   const quotedFindings = quoted.map((source) => {
     const existing = evidenceItems.find((item) => item.claim.includes(source.name));
     return finding(source.name, existing ? [existing.id] : [], 66);
@@ -466,7 +613,8 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
     loadedLanguageExamples: loaded,
     quotedPeopleOrGroups: quotedFindings,
     includedPerspectives: displayedIncluded,
-    missingPerspectives: missing
+    missingPerspectives: missing,
+    framingProfile
   };
 }
 
