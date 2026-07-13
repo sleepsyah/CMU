@@ -6,6 +6,9 @@ dist/
 .astro/
 .venv/
 backend/.venv/
+backend/.backend.log
+backend/.backend.pid
+backend/.hf-cache/
 .env
 .env.*
 !.env.example

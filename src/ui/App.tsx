@@ -1,4 +1,5 @@
 import {
+  BookOpenText,
   ClockCounterClockwise,
   FileText,
   FloppyDisk,
@@ -11,8 +12,8 @@ import {
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { classifyPastedText, confidenceLabel, keyFindingsFor } from "../lib/analysis";
-import { analyzePageWithBackend } from "../lib/backend";
-import { createManualPage, extractActivePage } from "../lib/chrome";
+import { analyzePageWithBackend, getBackendStatus, type BackendStatus } from "../lib/backend";
+import { createManualPage, extractActivePage, highlightActivePagePassage } from "../lib/chrome";
 import {
   clearFeedbackLogs,
   clearSavedAnalyses,
@@ -27,6 +28,7 @@ import type {
   AnalysisFinding,
   ArticleGenre,
   BackendBiasAnalysis,
+  BiasSignal,
   BiasDimension,
   BiasMetric,
   BillAnalysis,
@@ -35,9 +37,45 @@ import type {
   SavedAnalysis
 } from "../types";
 
-type Tab = "analysis" | "saved" | "details";
+type Tab = "analysis" | "vocabulary" | "saved" | "details";
+type VocabularyTerm = { term: string; definition: string; context?: string; source: string };
 
 const feedbackTypes: FeedbackType[] = ["Helpful", "Confusing", "Incorrect", "Biased"];
+const glossaryDefinitions: Record<string, string> = {
+  amendment: "A change added to a bill, law, or official document.",
+  appropriation: "Money that a bill or law sets aside for a specific use.",
+  appropriations: "Government money set aside for specific programs or agencies.",
+  authorize: "To officially allow something to happen.",
+  authorization: "Legal permission for a program or activity to exist, sometimes separate from the money that pays for it.",
+  bipartisan: "Supported by people from both major political parties.",
+  coalition: "A group of people or organizations working together.",
+  committee: "A smaller group that studies a bill or issue before the full group votes.",
+  compliance: "Following a rule, law, or requirement.",
+  constituents: "People represented by an elected official.",
+  deficit: "When spending is higher than income or revenue.",
+  discretionary: "Something that is optional or decided by officials, not automatically required.",
+  enforcement: "The process of making sure a rule or law is followed.",
+  fiscal: "Related to money, budgets, or government spending.",
+  grant: "Money given for a specific purpose, often by the government.",
+  implementation: "How a plan, policy, or law would actually be put into action.",
+  jurisdiction: "The area or topic that a government body, court, or agency has power over.",
+  liability: "Legal responsibility for harm, damage, or debt.",
+  mandate: "A rule or order that requires someone to do something.",
+  oversight: "Watching or reviewing how a program, agency, or rule is working.",
+  provision: "A specific part of a bill, contract, or law.",
+  regulation: "A rule made by a government agency.",
+  regulatory: "Related to rules made by a government agency.",
+  sanctions: "Penalties used to pressure a person, group, or country to change behavior.",
+  statute: "A written law passed by a legislature.",
+  subsidy: "Money or support from the government that helps lower costs for a person, business, or activity.",
+  subpoena: "A legal order requiring someone to provide information or appear to testify.",
+  tariff: "A tax on goods imported from another country.",
+  testimony: "A formal statement, often given in court or to lawmakers.",
+  waiver: "Permission to skip or not follow a usual rule."
+};
+const difficultTermSources = new Set(["Bill term", "Plain-English glossary", "Abbreviation"]);
+const policyPhrasePattern = /\b(?:rent freeze|government overreach|housing shortage|new construction|property owners|reporting requirement|effective date|tax credit|grant program|public benefit|civil penalty|housing crisis)\b/i;
+const policyPhraseGlobalPattern = /\b(?:rent freeze|government overreach|housing shortage|new construction|property owners|reporting requirement|effective date|tax credit|grant program|public benefit|civil penalty|housing crisis)\b/gi;
 
 function contentLabel(type: ContentType) {
   if (type === "bill") return "Congress.gov bill";
@@ -77,7 +115,7 @@ function firstEvidence(analysis: Analysis, finding: AnalysisFinding) {
 }
 
 function primaryFindingsFor(analysis: Analysis) {
-  const findings: Array<{ text: string; context?: string }> = [];
+  const findings: Array<{ text: string; context?: string; signalId?: string }> = [];
   const seenDimensions = new Set<BiasDimension>();
   for (const signal of analysis.backendBias?.linguistic_evidence.signals || []) {
     if (seenDimensions.has(signal.dimension)) continue;
@@ -86,7 +124,8 @@ function primaryFindingsFor(analysis: Analysis) {
       text: signal.dimension === "political"
         ? `Political wording cue: “${signal.phrase}” may add emotional or evaluative force.`
         : `${dimensionTitle(signal.dimension)} cue: “${signal.phrase}” is directly associated with a group reference.`,
-      context: signal.context
+      context: signal.context,
+      signalId: signal.id
     });
   }
 
@@ -100,6 +139,10 @@ function primaryFindingsFor(analysis: Analysis) {
   return findings.slice(0, 3);
 }
 
+function signalElementId(signalId: string) {
+  return `signal-${signalId}`;
+}
+
 function LoadingState() {
   return (
     <section className="surface loading-state" aria-live="polite">
@@ -111,42 +154,336 @@ function LoadingState() {
   );
 }
 
-function MetricRow({ title, metric }: { title: string; metric: BiasMetric }) {
+function BackendStatusPill({ status, fallback }: { status: BackendStatus | null; fallback: boolean }) {
+  const state = fallback ? "fallback" : status?.state || "offline";
+  const label = fallback ? "Heuristic fallback" : status?.label || "Backend unknown";
+  return <span className={`backend-status is-${state}`}>{label}</span>;
+}
+
+function MetricRow({ title, metric, modelLabel, signals = [], onSignalSelect }: { title: string; metric: BiasMetric; modelLabel: string; signals?: BiasSignal[]; onSignalSelect?: (signalId: string) => void }) {
   const assessed = metric.status === "assessed" && metric.score !== null;
   const score = assessed ? Math.round(metric.score as number) : null;
   const strength = score === null ? "No direct cues found" : score < 34 ? "Low detected signal" : score < 67 ? "Moderate detected signal" : "High detected signal";
   const evidenceLabel = metric.evidenceCount === 1 ? "1 cited passage" : `${metric.evidenceCount} cited passages`;
   const tone = score === null ? "neutral" : score < 34 ? "low" : score < 67 ? "moderate" : "high";
+  const meterWidth = `${Math.max(1, Math.min(score || 0, 100))}%`;
 
   return (
     <div className="metric-row">
-      <div>
-        <span className="metric-name">{title}</span>
+      <div className="metric-copy">
+        <div className="metric-topline">
+          <span className="metric-name">{title}</span>
+          <span className={`metric-score is-${tone}`}>{score === null ? "Not assessed" : `${score}/100`}</span>
+        </div>
+        <div className="metric-track" aria-hidden="true"><span className={`is-${tone}`} style={{ width: meterWidth }} /></div>
+        <span className="metric-model">{modelLabel}</span>
         <span className={`metric-detail is-${tone}`}>{strength}{score === null ? "" : ` · ${evidenceLabel}`}</span>
+        {signals.length > 0 && (
+          <div className="metric-signal-list" aria-label={`${title} evidence cues`}>
+            {signals.map((signal) => (
+              <button className="signal-chip" type="button" key={signal.id} onClick={() => onSignalSelect?.(signal.id)}>
+                “{signal.phrase}”
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      <span className={`metric-score is-${tone}`}>{score === null ? "Not assessed" : `${score} / 100`}</span>
     </div>
   );
 }
 
-function BiasSummary({ assessment }: { assessment?: BackendBiasAnalysis }) {
+function BiasSummary({ assessment, onSignalSelect }: { assessment?: BackendBiasAnalysis; onSignalSelect?: (signalId: string) => void }) {
   if (!assessment) return null;
+  const isFallback = assessment.source === "local-fallback";
+  const signalsFor = (dimension: BiasDimension) => assessment.linguistic_evidence.signals.filter((signal) => signal.dimension === dimension);
+  const modelLabels = isFallback
+    ? {
+        political: "Heuristic fallback: lexical spin-word rules",
+        gender: "Heuristic fallback: gendered-language association rules",
+        ethnicity: "Heuristic fallback: demographic-hostility association rules"
+      }
+    : {
+        political: "Model: mediabiasgroup/roberta-babe-ft",
+        gender: "Models: distilbert-base-uncased-finetuned-sst-2-english + optional COREF_BIAS_MODEL",
+        ethnicity: "Models: unitary/unbiased-toxic-roberta + distilbert-base-uncased-finetuned-sst-2-english"
+      };
   return (
     <section className="surface result-section">
       <div className="section-heading">
-        <h2>Bias signals</h2>
-        <p>Direct wording cues by category. These scores do not rate factual accuracy.</p>
+        <div className="heading-with-badge">
+          <h2>Bias signals</h2>
+          {isFallback && <span className="fallback-badge">Heuristic fallback</span>}
+        </div>
+        <p>
+          {isFallback
+            ? "Backend models did not respond in time, so these are marked heuristic estimates. Click a cue to inspect the cited passage."
+            : "Direct wording cues by category. Click a cue to inspect the cited passage."}
+        </p>
       </div>
       <div className="metric-list">
-        <MetricRow title="Political" metric={assessment.scores.political_bias} />
-        <MetricRow title="Gender" metric={assessment.scores.gender_bias} />
-        <MetricRow title="Ethnicity" metric={assessment.scores.ethnicity_bias} />
+        <MetricRow title="Political bias" metric={assessment.scores.political_bias} modelLabel={modelLabels.political} signals={signalsFor("political")} onSignalSelect={onSignalSelect} />
+        <MetricRow title="Gender bias" metric={assessment.scores.gender_bias} modelLabel={modelLabels.gender} signals={signalsFor("gender")} onSignalSelect={onSignalSelect} />
+        <MetricRow title="Ethnicity bias" metric={assessment.scores.ethnicity_bias} modelLabel={modelLabels.ethnicity} signals={signalsFor("ethnicity")} onSignalSelect={onSignalSelect} />
       </div>
     </section>
   );
 }
 
-function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: Analysis; onNewAnalysis: () => void; onSaveAnalysis: () => void }) {
+const plainLanguageReplacements: Array<[RegExp, string]> = [
+  [/\blegislation\b/gi, "bill"],
+  [/\bstatute\b/gi, "law"],
+  [/\bauthorize\b/gi, "allow"],
+  [/\bauthorizes\b/gi, "allows"],
+  [/\bauthorized\b/gi, "allowed"],
+  [/\bappropriate\b/gi, "set aside money"],
+  [/\bappropriates\b/gi, "sets aside money"],
+  [/\bprohibit\b/gi, "ban"],
+  [/\bprohibits\b/gi, "bans"],
+  [/\brequire\b/gi, "make"],
+  [/\brequires\b/gi, "makes"],
+  [/\bestablish\b/gi, "create"],
+  [/\bestablishes\b/gi, "creates"],
+  [/\bimplement\b/gi, "put into action"],
+  [/\bimplementation\b/gi, "how it would be put into action"],
+  [/\bpursuant to\b/gi, "under"],
+  [/\bprior to\b/gi, "before"],
+  [/\bsubsequent to\b/gi, "after"]
+];
+
+function highSchoolPlainText(value: string) {
+  let text = value.replace(/\s+/g, " ").trim();
+  for (const [pattern, replacement] of plainLanguageReplacements) {
+    text = text.replace(pattern, replacement);
+  }
+  const sentences = text.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ");
+  return sentences.length > 360 ? `${sentences.slice(0, 357).trimEnd()}...` : sentences;
+}
+
+function lowercaseFirst(value: string) {
+  return value ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+}
+
+function plainBillAction(value: string) {
+  let text = highSchoolPlainText(value)
+    .replace(/^section\s+\d+[a-z]?\.\s*/i, "")
+    .replace(/^sec\.\s*\d+[a-z]?\.\s*/i, "")
+    .replace(/\bshall\b/gi, "would")
+    .replace(/\bis amended by\b/gi, "would be changed by")
+    .replace(/\bare amended by\b/gi, "would be changed by")
+    .trim();
+
+  if (/^to\s+/i.test(text)) text = `would ${text.replace(/^to\s+/i, "")}`;
+  if (/^(this bill|the bill|this act|the secretary|secretary|the department|the agency|the administrator)\b/i.test(text)) return text;
+  if (/^would\b/i.test(text)) return `It ${text}`;
+  return `It would ${lowercaseFirst(text)}`;
+}
+
+function plainEnglishFor(analysis: Analysis) {
+  if (analysis.contentType !== "bill") {
+    return {
+      intro: "A short version of what this article is about, using simpler words.",
+      lines: [highSchoolPlainText(analysis.summary)]
+    };
+  }
+
+  const bill = analysis as BillAnalysis;
+  const actionableChanges = bill.proposedChanges
+    .filter((item) => !/^no clear/i.test(item.text))
+    .slice(0, 3)
+    .map((item) => plainBillAction(item.text));
+
+  return {
+    intro: "What this bill proposes to put into action.",
+    lines: actionableChanges.length ? actionableChanges : [highSchoolPlainText(bill.plainLanguageSummary || analysis.summary)]
+  };
+}
+
+function PlainEnglishSummary({ analysis }: { analysis: Analysis }) {
+  const plainEnglish = plainEnglishFor(analysis);
+  const evidenceCount = analysis.summaryEvidenceIds.length;
+  const evidenceLabel = evidenceCount === 1 ? "1 cited passage" : `${evidenceCount} cited passages`;
+
+  return (
+    <section className="surface result-section plain-english-section">
+      <div className="section-heading">
+        <h2>Summary</h2>
+        <p>{plainEnglish.intro}</p>
+      </div>
+      <div className="plain-summary-card">
+        {analysis.contentType === "bill" && plainEnglish.lines.length > 1 ? (
+          <ul>
+            {plainEnglish.lines.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        ) : (
+          <p>{plainEnglish.lines[0]}</p>
+        )}
+        <span>{evidenceCount > 0 ? `Based on ${evidenceLabel}.` : "Based on the readable extracted text."}</span>
+      </div>
+    </section>
+  );
+}
+
+function vocabularyTermsFor(analysis: Analysis): VocabularyTerm[] {
+  const terms = new Map<string, VocabularyTerm>();
+  const addTerm = (term: string, definition: string, source: string, context?: string, force = false) => {
+    const cleaned = term.replace(/\s+/g, " ").trim();
+    if (!cleaned || cleaned.length < 3) return;
+    if (!force && !shouldShowVocabularyTerm(cleaned, source)) return;
+    const key = cleaned.toLowerCase();
+    if (!terms.has(key)) terms.set(key, { term: cleaned, definition: highSchoolPlainText(definition), source, context });
+  };
+
+  if (analysis.contentType === "bill") {
+    for (const item of (analysis as BillAnalysis).importantTerms) {
+      addTerm(item.term, item.meaning, "Bill term", firstEvidence(analysis, item)?.supportingText, true);
+    }
+  } else {
+    for (const item of analysis.loadedLanguageExamples.slice(0, 4)) {
+      if (!shouldShowVocabularyTerm(item.phrase, "Article wording")) continue;
+      addTerm(item.phrase, "A word choice that may shape how readers feel about the topic. It may still be accurate, but it is worth checking the evidence around it.", "Article wording", item.context);
+    }
+  }
+
+  for (const signal of analysis.backendBias?.linguistic_evidence.signals || []) {
+    if (!shouldShowVocabularyTerm(signal.phrase, "Bias signal")) continue;
+    const definition = signal.category === "epistemic_framing"
+      ? "A reporting word that can make a source sound more or less believable, certain, or reluctant."
+      : signal.category === "stereotype_association"
+        ? "A word or phrase that may connect a group with a negative or stereotyped idea."
+        : "A word or phrase that can add emotional force to the sentence.";
+    addTerm(signal.phrase, definition, "Bias signal", signal.context);
+  }
+
+  const sourceTextRaw = [
+    analysis.summary,
+    ...analysis.evidence.map((item) => item.supportingText)
+  ].join(" ");
+  const sourceText = sourceTextRaw.toLowerCase();
+  for (const [term, definition] of Object.entries(glossaryDefinitions)) {
+    if (terms.size >= 10) break;
+    if (new RegExp(`\\b${term}\\b`, "i").test(sourceText)) addTerm(term, definition, "Plain-English glossary", undefined, true);
+  }
+
+  for (const match of sourceTextRaw.matchAll(policyPhraseGlobalPattern)) {
+    if (terms.size >= 10) break;
+    const phrase = match[0];
+    addTerm(phrase, definitionForPolicyPhrase(phrase), "Plain-English glossary", undefined, true);
+  }
+
+  const acronymMatches = Array.from(new Set(sourceTextRaw.match(/\b[A-Z]{2,6}\b/g) || []))
+    .filter((term) => !["THE", "AND", "FOR", "WITH", "THIS", "THAT", "SAYS", "SAID"].includes(term))
+    .filter((term) => analysis.contentType === "bill" || sourceTextRaw.includes(`(${term})`))
+    .slice(0, 2);
+  for (const acronym of acronymMatches) {
+    addTerm(acronym, "An abbreviation. Look for the full name nearby in the article or bill, because abbreviations can hide what agency, program, or rule is being discussed.", "Abbreviation", undefined, true);
+  }
+
+  return Array.from(terms.values()).slice(0, 12);
+}
+
+function shouldShowVocabularyTerm(term: string, source: string) {
+  const cleaned = term.trim().toLowerCase();
+  if (difficultTermSources.has(source)) return true;
+  if (glossaryDefinitions[cleaned]) return true;
+  if (policyPhrasePattern.test(cleaned)) return true;
+  if (/\s/.test(cleaned) && /\b(policy|program|requirement|construction|overreach|shortage|freeze|credit|penalty|benefit|funding|enforcement)\b/i.test(cleaned)) return true;
+  return false;
+}
+
+function definitionForPolicyPhrase(value: string) {
+  const phrase = value.toLowerCase();
+  if (phrase === "rent freeze") return "A rule that stops rent from going up for a set time.";
+  if (phrase === "government overreach") return "A claim that the government is using too much power or going beyond what it should control.";
+  if (phrase === "housing shortage") return "A situation where there are not enough homes available for the people who need them.";
+  if (phrase === "new construction") return "New buildings or homes being built.";
+  if (phrase === "property owners") return "People or companies that own land or buildings.";
+  if (phrase === "reporting requirement") return "A rule that makes a person, company, or agency provide information on a regular basis.";
+  if (phrase === "effective date") return "The date when a law or rule starts to apply.";
+  if (phrase === "tax credit") return "An amount that lowers how much tax someone has to pay.";
+  if (phrase === "grant program") return "A program that gives money for a specific purpose.";
+  if (phrase === "public benefit") return "Help or support provided to people by the government.";
+  if (phrase === "civil penalty") return "A fine or punishment for breaking a rule that is not treated as a criminal case.";
+  if (phrase === "housing crisis") return "A serious housing problem, often involving high costs, homelessness, or too few available homes.";
+  return "A policy phrase whose exact meaning depends on how the source uses it.";
+}
+
+function localVocabularyAnswer(question: string, analysis: Analysis, terms: VocabularyTerm[]) {
+  const cleaned = question.trim().replace(/[?.!,;:"']+$/g, "");
+  const lower = cleaned.toLowerCase();
+  const matched = terms.find((item) => lower.includes(item.term.toLowerCase()) || item.term.toLowerCase().includes(lower));
+  if (matched) {
+    return `"${matched.term}" means: ${matched.definition}`;
+  }
+
+  const glossaryMatch = Object.entries(glossaryDefinitions).find(([term]) => lower.includes(term) || term.includes(lower));
+  if (glossaryMatch) {
+    return `"${glossaryMatch[0]}" means: ${glossaryMatch[1]}`;
+  }
+
+  const typeHint = analysis.contentType === "bill"
+    ? "For a bill, ask whether the word creates a program, changes a law, spends money, bans something, or requires someone to act."
+    : "For an article, ask whether the word is being used as a fact, a quote, an opinion, or a loaded description.";
+  return `I do not have a saved definition for "${cleaned || "that word"}" yet. A good plain-English check is: what action is happening, who is affected, and what evidence or rule supports it? ${typeHint}`;
+}
+
+function VocabularyView({ analysis }: { analysis: Analysis | null }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+
+  useEffect(() => { setQuestion(""); setAnswer(null); }, [analysis?.id]);
+
+  if (!analysis) return <section className="surface empty-state"><BookOpenText size={22} /><p>Analyze a source to define important terms from it.</p></section>;
+  const terms = vocabularyTermsFor(analysis);
+
+  function submitQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!analysis || !question.trim()) return;
+    setAnswer(localVocabularyAnswer(question, analysis, terms));
+  }
+
+  return (
+    <section className="surface vocabulary-view">
+      <div className="section-heading">
+        <h1>Vocabulary</h1>
+        <p>Plain-English definitions for terms that may be confusing in this source.</p>
+      </div>
+
+      {terms.length ? (
+        <ul className="vocabulary-list">
+          {terms.map((item) => (
+            <li key={`${item.source}-${item.term}`}>
+              <div>
+                <strong>{item.term}</strong>
+                <span>{item.source}</span>
+              </div>
+              <p>{item.definition}</p>
+              {item.context && <blockquote>{item.context}</blockquote>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="helper">No specific terms were extracted yet. You can still ask about a word below.</p>
+      )}
+
+      <form className="vocabulary-ask" onSubmit={submitQuestion}>
+        <div className="field">
+          <label htmlFor="vocabulary-question">Ask about another word</label>
+          <input id="vocabulary-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. What does appropriation mean here?" />
+          <p className="helper">This vocabulary helper stays local in the extension. Backend/model calls are only used for bias detection.</p>
+        </div>
+        <button className="secondary-button" type="submit" disabled={!question.trim()}>Ask</button>
+        {answer && (
+          <div className="vocabulary-answer" role="status">
+            <strong>Local vocabulary helper</strong>
+            <p>{answer}</p>
+          </div>
+        )}
+      </form>
+    </section>
+  );
+}
+
+function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis, onSignalSelect }: { analysis: Analysis; onNewAnalysis: () => void; onSaveAnalysis: () => void; onSignalSelect: (signalId: string) => void }) {
   const sourceIsLink = /^https?:\/\//.test(analysis.url);
   const keyFindings = primaryFindingsFor(analysis);
 
@@ -171,7 +508,6 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
             </p>
           </div>
         </div>
-        <p className="summary">{analysis.summary}</p>
         <div className="source-actions">
           <button className="primary-button" type="button" onClick={onSaveAnalysis}><FloppyDisk size={16} /> Save</button>
           <button className="secondary-button" type="button" onClick={onNewAnalysis}>New</button>
@@ -179,11 +515,13 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
         </div>
       </section>
 
-      <BiasSummary assessment={analysis.backendBias} />
+      <PlainEnglishSummary analysis={analysis} />
+
+      <BiasSummary assessment={analysis.backendBias} onSignalSelect={onSignalSelect} />
 
       <section className="surface result-section">
         <div className="section-heading">
-          <h2>What to notice</h2>
+          <h2>Main framing</h2>
           <p>Up to three evidence-linked prompts from this source.</p>
         </div>
         {keyFindings.length ? (
@@ -194,6 +532,11 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
                 <li key={`${finding.text}-${index}`}>
                   <p>{finding.text}</p>
                   {finding.context && !repeatsFinding && <blockquote>{finding.context}</blockquote>}
+                  {finding.signalId && (
+                    <button className="evidence-jump" type="button" onClick={() => onSignalSelect(finding.signalId as string)}>
+                      View cited passage
+                    </button>
+                  )}
                 </li>
               );
             })}
@@ -203,7 +546,7 @@ function AnalysisView({ analysis, onNewAnalysis, onSaveAnalysis }: { analysis: A
         )}
       </section>
 
-      <p className="result-note">Open Details for full evidence, confidence, and parser notes.</p>
+      <p className="result-note">Ellipsis shows framing signals and missing context prompts. It does not tell you what to believe.</p>
     </div>
   );
 }
@@ -333,7 +676,7 @@ function FeedbackDisclosure({ analysis }: { analysis: Analysis }) {
   );
 }
 
-function DetailsView({ analysis }: { analysis: Analysis | null }) {
+function DetailsView({ analysis, focusedSignalId }: { analysis: Analysis | null; focusedSignalId: string | null }) {
   if (!analysis) return <section className="surface empty-state"><Info size={22} /><p>Analyze a source to inspect evidence and method details.</p></section>;
   const signals = analysis.backendBias?.linguistic_evidence.signals || [];
   return (
@@ -343,9 +686,12 @@ function DetailsView({ analysis }: { analysis: Analysis | null }) {
         <p>{analysis.confidenceReason}</p>
         <dl>
           <div><dt>Overall confidence</dt><dd>{analysis.confidenceScore}%</dd></div>
-          <div><dt>Analysis mode</dt><dd>{analysis.backendBias?.source === "hybrid-backend" ? "Local model + heuristics" : "On-device heuristics"}</dd></div>
+          <div><dt>Analysis mode</dt><dd>{analysis.backendBias?.source === "local-fallback" ? "Heuristic fallback" : "Backend models"}</dd></div>
           <div><dt>Saved text</dt><dd>Only excerpts in a saved result</dd></div>
         </dl>
+        {analysis.backendBias?.source === "local-fallback" && (
+          <p className="fallback-note">Backend model scoring was unavailable, so bias scores are lower-confidence heuristic estimates.</p>
+        )}
       </div>
 
       <details className="disclosure" open>
@@ -354,7 +700,7 @@ function DetailsView({ analysis }: { analysis: Analysis | null }) {
           {signals.length ? (
             <ul className="signal-list">
               {signals.map((signal) => (
-                <li key={signal.id}>
+                <li id={signalElementId(signal.id)} className={focusedSignalId === signal.id ? "is-highlighted" : ""} key={signal.id}>
                   <strong>{dimensionTitle(signal.dimension)}: “{signal.phrase}”</strong>
                   <blockquote>{signal.context}</blockquote>
                   <p>{signal.explanation}</p>
@@ -362,7 +708,7 @@ function DetailsView({ analysis }: { analysis: Analysis | null }) {
                 </li>
               ))}
             </ul>
-          ) : <p className="helper">No direct wording or stereotype association met the local evidence threshold.</p>}
+          ) : <p className="helper">No direct wording or stereotype association met the evidence threshold.</p>}
         </div>
       </details>
 
@@ -451,6 +797,7 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
       <div className="start-primary">
         <h1>Understand what you are reading</h1>
         <p>Get three evidence-linked checks for a news article or Congress.gov bill.</p>
+        <p className="mode-helper">Uses the local Python model helper at 127.0.0.1:8000 when available. If it does not respond, scores are clearly marked as heuristic fallback estimates.</p>
         <button className="primary-button full-button" type="button" onClick={onAnalyzePage} disabled={loading}><MagnifyingGlass size={16} /> Analyze current page</button>
       </div>
 
@@ -506,8 +853,42 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [focusedSignalId, setFocusedSignalId] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
 
   useEffect(() => { getSavedAnalyses().then(setSaved).catch(() => setError("Saved history could not be loaded.")); }, []);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      getBackendStatus().then((status) => {
+        if (active) setBackendStatus(status);
+      }).catch(() => {
+        if (active) setBackendStatus({ state: "offline", label: "Backend offline" });
+      });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 15000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, []);
+
+  function selectSignal(signalId: string) {
+    const signal = analysis?.backendBias?.linguistic_evidence.signals.find((item) => item.id === signalId);
+    setFocusedSignalId(signalId);
+    if (signal?.context) {
+      highlightActivePagePassage(signal.context).then((highlighted) => {
+        if (!highlighted && /^https?:\/\//.test(analysis?.url || "")) {
+          setNotice("I could not match that exact passage on the open page, so I highlighted it in Details instead.");
+        }
+      }).catch(() => undefined);
+    }
+    setActiveTab("details");
+    window.setTimeout(() => {
+      document.getElementById(signalElementId(signalId))?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+    window.setTimeout(() => {
+      setFocusedSignalId((current) => current === signalId ? null : current);
+    }, 2600);
+  }
 
   async function analyze(pagePromise: Promise<ReturnType<typeof createManualPage>>) {
     setLoading(true);
@@ -516,7 +897,10 @@ export default function App() {
     try {
       const page = await pagePromise;
       if (page.text.trim().length < 120) throw new Error("The readable text was too short. Try the link option or paste the source text.");
-      setAnalysis(await analyzePageWithBackend(page));
+      const nextAnalysis = await analyzePageWithBackend(page);
+      setAnalysis(nextAnalysis);
+      setBackendStatus(nextAnalysis.backendBias?.source === "local-fallback" ? { state: "offline", label: "Backend offline" } : { state: "ready", label: "Backend ready" });
+      setFocusedSignalId(null);
       setActiveTab("analysis");
     } catch (event) {
       setError(event instanceof Error ? event.message : "Analysis failed.");
@@ -572,9 +956,10 @@ export default function App() {
   }
 
   const tabs: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
-    { id: "analysis", label: analysis ? "Result" : "Analyze", icon: <FileText size={15} /> },
+    { id: "analysis", label: analysis ? "Overview" : "Analyze", icon: <FileText size={15} /> },
+    { id: "vocabulary", label: "Language", icon: <BookOpenText size={15} /> },
     { id: "saved", label: "Saved", icon: <ClockCounterClockwise size={15} /> },
-    { id: "details", label: "Details", icon: <Info size={15} /> }
+    { id: "details", label: "Sources", icon: <Info size={15} /> }
   ];
 
   function moveTab(event: React.KeyboardEvent<HTMLButtonElement>, current: Tab) {
@@ -594,6 +979,7 @@ export default function App() {
           <img className="brand-icon" src="/icons/ellipsis-32.png" alt="" aria-hidden="true" />
           <span className="brand-name">Ellipsis</span>
         </span>
+        <BackendStatusPill status={backendStatus} fallback={analysis?.backendBias?.source === "local-fallback"} />
         <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze page</button>
       </header>
       <div className="content">
@@ -607,10 +993,11 @@ export default function App() {
         {loading ? <LoadingState /> : (
           <section id={`panel-${activeTab}`} role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
             {activeTab === "analysis" && (analysis
-              ? <AnalysisView analysis={analysis} onSaveAnalysis={saveCurrentAnalysis} onNewAnalysis={() => { setAnalysis(null); setError(null); setNotice(null); }} />
+              ? <AnalysisView analysis={analysis} onSaveAnalysis={saveCurrentAnalysis} onSignalSelect={selectSignal} onNewAnalysis={() => { setAnalysis(null); setFocusedSignalId(null); setError(null); setNotice(null); }} />
               : <StartView loading={loading} onAnalyzePage={runPageAnalysis} onAnalyzeUrl={runUrlAnalysis} onAnalyzeText={runManualAnalysis} />)}
-            {activeTab === "saved" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setActiveTab("analysis"); }} onDelete={removeSaved} onClear={clearHistory} />}
-            {activeTab === "details" && <DetailsView analysis={analysis} />}
+            {activeTab === "vocabulary" && <VocabularyView analysis={analysis} />}
+            {activeTab === "saved" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setFocusedSignalId(null); setActiveTab("analysis"); }} onDelete={removeSaved} onClear={clearHistory} />}
+            {activeTab === "details" && <DetailsView analysis={analysis} focusedSignalId={focusedSignalId} />}
           </section>
         )}
       </div>

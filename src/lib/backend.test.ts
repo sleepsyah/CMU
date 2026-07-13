@@ -1,42 +1,61 @@
-import { describe, expect, it } from "vitest";
-import { isLoopbackBackendUrl, localBiasAssessment } from "./backend";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { analyzePageWithBackend, isLoopbackBackendUrl } from "./backend";
+import { createManualPage } from "./chrome";
 
-describe("evidence-linked bias scales", () => {
-  it("does not infer ethnicity bias from crime words without a direct group association", () => {
-    const result = localBiasAssessment(
-      "City officials reported that violent crime declined across every district. Black and white residents reviewed the data before publication. The report does not claim that any demographic group caused the change."
-    );
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
-    expect(result.scores.ethnicity_bias.status).toBe("insufficient-evidence");
-    expect(result.scores.ethnicity_bias.score).toBeNull();
+describe("backend model bias scales", () => {
+  it("uses backend scores directly and links model evidence to short passages", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        scores: {
+          political_bias: { score: 72, confidence: 0.83 },
+          gender_bias: { score: 18, confidence: 0.74 },
+          ethnicity_bias: { score: 41, confidence: 0.69 }
+        },
+        linguistic_evidence: {
+          spin_words_detected: ["radical"],
+          target_dependent_asymmetries: [],
+          counterfactual_sentiment_delta: 0.12
+        },
+        contextual_analysis: {
+          missing_perspectives: ["Informational parity check raised a missing counter-perspective."],
+          stereotypical_associations: ["Ethnicity association should be checked against the cited evidence."]
+        }
+      })
+    })));
+
+    const analysis = await analyzePageWithBackend(createManualPage(
+      "The mayor called the proposal radical during Monday's hearing. Officials said the plan would change tax filings. " +
+        "The article described immigrants as a threat to the city. Community leaders disputed that framing.",
+      "article",
+      { title: "City hearing" }
+    ));
+
+    expect(analysis.backendBias?.source).toBe("hybrid-backend");
+    expect(analysis.backendBias?.scores.political_bias.score).toBe(72);
+    expect(analysis.backendBias?.scores.gender_bias.score).toBe(18);
+    expect(analysis.backendBias?.scores.ethnicity_bias.score).toBe(41);
+    expect(analysis.backendBias?.linguistic_evidence.signals[0].context.split(/[.!?]\s+/).length).toBeLessThanOrEqual(3);
   });
 
-  it("requires a direct, non-negated demographic association", () => {
-    const result = localBiasAssessment(
-      "The column described immigrants as criminals and a threat to every neighborhood. Independent records were not cited in the article."
-    );
+  it("falls back to clearly marked heuristic scores when the backend helper fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connection refused");
+    }));
 
-    expect(result.scores.ethnicity_bias.status).toBe("assessed");
-    expect(result.scores.ethnicity_bias.evidenceCount).toBeGreaterThan(0);
-    expect(result.linguistic_evidence.signals.some((signal) => signal.dimension === "ethnicity")).toBe(true);
-  });
+    const analysis = await analyzePageWithBackend(createManualPage(
+      "The mayor called the proposal radical during Monday's hearing. Officials said the plan would change tax filings.",
+      "article"
+    ));
 
-  it("does not score a gender stereotype word without a gender association", () => {
-    const result = localBiasAssessment(
-      "The committee called the negotiating process emotional and chaotic. Members later published a detailed timeline of the dispute."
-    );
-
-    expect(result.scores.gender_bias.status).toBe("insufficient-evidence");
-  });
-
-  it("links political wording scores to exact cues", () => {
-    const result = localBiasAssessment(
-      "The mayor blasted the radical proposal as a disastrous betrayal. The council published the proposal later that afternoon."
-    );
-
-    expect(result.scores.political_bias.status).toBe("assessed");
-    expect(result.scores.political_bias.evidenceCount).toBeGreaterThan(0);
-    expect(result.linguistic_evidence.signals.every((signal) => signal.context.length > 0)).toBe(true);
+    expect(analysis.backendBias?.source).toBe("local-fallback");
+    expect(analysis.backendBias?.scores.political_bias.status).toBe("assessed");
+    expect(analysis.backendBias?.scores.political_bias.score).toBeGreaterThan(1);
+    expect(analysis.backendBias?.contextual_analysis.missing_perspectives[0]).toContain("heuristic fallback");
   });
 });
 

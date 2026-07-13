@@ -1,17 +1,21 @@
 # Ellipsis local model helper
 
-This optional FastAPI service combines local transformer outputs with the extension's evidence-linked heuristics. It is a development helper, not a hosted service.
+This required local FastAPI helper supplies the extension's three 1-100 bias scores from transformer/model-assisted signals. It is a development helper, not a hosted service.
 
 ## Run locally
 
 From the repository root:
 
 ```sh
-python3 -m venv backend/.venv
-source backend/.venv/bin/activate
-pip install -r backend/requirements.txt
-pip install -r backend/requirements-ml.txt
-uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+npm run backend:start
+```
+
+This creates or reuses `backend/.venv`, installs backend requirements, starts the helper on `127.0.0.1:8000`, stores Hugging Face downloads under `backend/.hf-cache`, and calls `/warmup` so the first extension analysis is less likely to hit a cold model.
+
+Manual debugging command:
+
+```sh
+backend/.venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Optional dependency parsing:
@@ -36,9 +40,13 @@ The frontend rejects non-loopback helper URLs. The helper has no remote LLM path
 - `unitary/unbiased-toxic-roberta` is restricted to demographic-context sentences and is treated as a supporting signal, not an ethnicity classifier.
 - Optional spaCy parsing can identify uneven verbs or adjectives associated with named entities.
 
-The extension only incorporates a model score when its local analysis has direct evidence for that dimension. Dimensions without evidence remain unassessed.
+The extension displays backend model scores directly. It still trims source passages locally so cited evidence and article highlights stay short and evidence-linked.
 
 ## API
+
+```sh
+curl -X POST http://127.0.0.1:8000/warmup
+```
 
 ```sh
 curl -X POST http://127.0.0.1:8000/analyze \

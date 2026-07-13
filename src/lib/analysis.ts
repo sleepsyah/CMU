@@ -194,7 +194,7 @@ function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
   score -= Math.min(analysisNotes * 2, 10);
   if (page.contentType === "unknown") score -= 8;
 
-  // Local heuristics are useful reading aids, not validated factual analysis.
+  // Lightweight source parsing is a reading aid, not validated factual analysis.
   return clamp(score, 25, 74);
 }
 

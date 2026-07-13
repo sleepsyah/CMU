@@ -42,6 +42,25 @@ export async function extractActivePage(): Promise<ExtractedPage> {
   return response.payload as ExtractedPage;
 }
 
+export async function highlightActivePagePassage(text: string): Promise<boolean> {
+  const excerpt = text.trim();
+  if (!excerpt || typeof chrome === "undefined" || !chrome.tabs?.query) return false;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !siteAccessPattern(tab.url || "")) return false;
+
+  try {
+    let response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_HIGHLIGHT_TEXT", text: excerpt });
+    if (!response?.ok) {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content-script.js"] });
+      response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_HIGHLIGHT_TEXT", text: excerpt });
+    }
+    return Boolean(response?.ok);
+  } catch {
+    return false;
+  }
+}
+
 export function siteAccessPattern(url: string) {
   try {
     const parsed = new URL(url);

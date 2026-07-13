@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +11,7 @@ from .pipeline import analyze_text_bias
 from .schemas import BiasAnalysisRequest, BiasAnalysisResponse
 
 app = FastAPI(title="Ellipsis Bias Pipeline", version="0.2.0")
+REQUIRED_MODEL_KEYS = ("political_classifier", "sentiment_classifier", "toxicity_classifier")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +31,15 @@ def get_registry(settings: Settings = Depends(get_settings)) -> ModelRegistry:
 
 @app.get("/health")
 async def health(registry: ModelRegistry = Depends(get_registry)) -> dict[str, object]:
-    return {"status": "ok", "models": registry.availability}
+    ready = all(registry.availability.get(key) is True for key in REQUIRED_MODEL_KEYS)
+    return {"status": "ok", "ready": ready, "required_models": list(REQUIRED_MODEL_KEYS), "models": registry.availability}
+
+
+@app.post("/warmup")
+async def warmup(registry: ModelRegistry = Depends(get_registry)) -> dict[str, object]:
+    availability = await asyncio.to_thread(registry.warmup)
+    ready = all(availability.get(key) is True for key in REQUIRED_MODEL_KEYS)
+    return {"status": "ready" if ready else "partial", "ready": ready, "required_models": list(REQUIRED_MODEL_KEYS), "models": availability}
 
 
 @app.post("/analyze", response_model=BiasAnalysisResponse)

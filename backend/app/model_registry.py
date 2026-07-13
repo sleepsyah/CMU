@@ -60,6 +60,28 @@ class ModelRegistry:
             self.availability[key] = False
             return None
 
+    def warmup(self) -> dict[str, bool]:
+        """Load required model pipelines before the first real article analysis."""
+
+        sample = "The mayor said the proposal was controversial, and residents asked for more evidence."
+        classifiers = {
+            "political_classifier": self.political_classifier,
+            "sentiment_classifier": self.sentiment_classifier,
+            "toxicity_classifier": self.toxicity_classifier,
+            "coref_bias_classifier": self.coref_bias_classifier,
+        }
+        _ = self.spacy_nlp
+        for key, classifier in classifiers.items():
+            if classifier is None:
+                continue
+            try:
+                classifier(sample[:4000])
+                self.availability[key] = True
+            except Exception as exc:  # pragma: no cover - depends on local model runtime
+                logger.warning("%s warmup failed: %s", key, exc)
+                self.availability[key] = False
+        return self.availability
+
 
 def classifier_score(output: Any, positive_labels: set[str]) -> float:
     """Convert a Hugging Face classifier output into a 0..1 positive severity."""

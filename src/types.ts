@@ -75,7 +75,7 @@ export interface BackendBiasAnalysis {
     missing_perspectives: string[];
     stereotypical_associations: string[];
   };
-  source: "hybrid-backend" | "local-heuristic" | "local-fallback";
+  source: "hybrid-backend" | "local-fallback";
 }
 
 export interface BaseAnalysis {
