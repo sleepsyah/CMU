@@ -171,6 +171,7 @@ function ensureHighlightStyle() {
       border-radius: 3px !important;
       box-shadow: 0 0 0 2px #fff3a3 !important;
       scroll-margin-top: 96px !important;
+      transition: background-color 180ms ease !important;
     }
   `;
   document.documentElement.appendChild(style);
@@ -234,6 +235,7 @@ function rangeForRawOffsets(element, startOffset, endOffset) {
     const length = node.nodeValue?.length || 0;
     const nodeStart = cursor;
     const nodeEnd = cursor + length;
+
     if (!started && startOffset >= nodeStart && startOffset <= nodeEnd) {
       range.setStart(node, Math.max(0, startOffset - nodeStart));
       started = true;
@@ -244,19 +246,38 @@ function rangeForRawOffsets(element, startOffset, endOffset) {
     }
     cursor = nodeEnd;
   }
+
   return null;
 }
 
-function highlightWithinElement(element, excerpt) {
-  const source = normalizedIndexMap(element.textContent || "");
+function excerptSentences(excerpt, limit = 3) {
+  const parts = cleanInline(excerpt)
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return (parts.length ? parts : [cleanInline(excerpt)]).slice(0, limit);
+}
+
+function highlightWithinElement(element, excerpt, allowSentenceFallback = true) {
+  const rawText = element.textContent || "";
+  const source = normalizedIndexMap(rawText);
   const target = normalizeForSearch(excerpt);
   if (!source.normalized || !target) return null;
-  const start = source.normalized.indexOf(target);
+
+  let start = source.normalized.indexOf(target);
+  let targetLength = target.length;
+  if (start < 0 && allowSentenceFallback) {
+    const firstSentence = target.split(/(?<=[.!?])\s+/)[0] || target;
+    start = source.normalized.indexOf(firstSentence);
+    targetLength = firstSentence.length;
+  }
   if (start < 0) return null;
+
   const rawStart = source.map[start];
-  const rawEnd = source.map[start + target.length - 1] + 1;
+  const rawEnd = source.map[start + targetLength - 1] + 1;
   const range = rangeForRawOffsets(element, rawStart, rawEnd);
   if (!range || range.collapsed) return null;
+
   const mark = document.createElement("mark");
   mark.className = HIGHLIGHT_CLASS;
   try {
@@ -269,23 +290,64 @@ function highlightWithinElement(element, excerpt) {
   return mark;
 }
 
+function highlightWholeElement(element) {
+  element.classList.add(HIGHLIGHT_CLASS);
+  return element;
+}
+
+function removeTemporaryHighlights() {
+  clearSourceHighlights();
+}
+
 function highlightSourceText(excerpt) {
   ensureHighlightStyle();
   clearSourceHighlights();
-  const sentences = cleanInline(excerpt).split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 3);
-  const probes = [sentences.join(" "), ...sentences].filter(Boolean);
-  const candidates = Array.from(document.querySelectorAll("article p, article li, article blockquote, main p, main li, main blockquote, p, li, blockquote"))
-    .filter((element) => isVisible(element) && probes.some((probe) => normalizeForSearch(element.textContent || "").includes(normalizeForSearch(probe).slice(0, 90))));
 
-  for (const probe of probes) {
+  const target = normalizeForSearch(excerpt);
+  if (!target) return false;
+  const relevantSentences = excerptSentences(excerpt, 3);
+  const fullPassage = relevantSentences.join(" ");
+  const probes = [fullPassage, ...relevantSentences]
+    .map((sentence) => normalizeForSearch(sentence).slice(0, Math.min(normalizeForSearch(sentence).length, 90)))
+    .filter(Boolean);
+
+  const candidates = Array.from(document.querySelectorAll("article p, article li, article blockquote, main p, main li, main blockquote, p, li, blockquote"))
+    .filter((element) => {
+      const text = normalizeForSearch(element.textContent || "");
+      return isVisible(element) && probes.some((probe) => text.includes(probe));
+    });
+
+  for (const candidate of candidates) {
+    const mark = highlightWithinElement(candidate, fullPassage, false);
+    if (!mark) continue;
+    mark.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(removeTemporaryHighlights, 7000);
+    return true;
+  }
+
+  const sentenceMarks = [];
+  for (const sentence of relevantSentences) {
     for (const candidate of candidates) {
-      const mark = highlightWithinElement(candidate, probe);
+      const mark = highlightWithinElement(candidate, sentence, false);
       if (!mark) continue;
-      mark.scrollIntoView({ behavior: "smooth", block: "center" });
-      window.setTimeout(clearSourceHighlights, 7000);
-      return true;
+      sentenceMarks.push(mark);
+      break;
     }
   }
+  if (sentenceMarks.length) {
+    sentenceMarks[0].scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(removeTemporaryHighlights, 7000);
+    return true;
+  }
+
+  const fallbackElement = candidates[0];
+  if (fallbackElement) {
+    highlightWholeElement(fallbackElement);
+    fallbackElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(removeTemporaryHighlights, 7000);
+    return true;
+  }
+
   return false;
 }
 

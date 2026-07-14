@@ -61,7 +61,7 @@ class ModelRegistry:
             return None
 
     def warmup(self) -> dict[str, bool]:
-        """Load local model pipelines before the first supported Codex analysis."""
+        """Load optional supporting model pipelines before the first AI analysis."""
 
         sample = "The mayor said the proposal was controversial, and residents asked for more evidence."
         classifiers = {

@@ -1,6 +1,6 @@
 # Ellipsis local model helper
 
-This optional FastAPI service supplies evidence-linked local transformer signals to Codex when AI deep analysis is enabled. It is a development helper, not a hosted service or a requirement for normal extension use.
+This optional FastAPI service supplies evidence-linked local transformer signals to the selected AI provider when deep analysis is enabled. It is a development helper, not a hosted service or a requirement for normal extension use.
 
 ## Run locally
 
