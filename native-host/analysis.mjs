@@ -17,6 +17,11 @@ const FRAME_LABELS = [
   "External regulation and reputation", "Other"
 ];
 
+const PERSPECTIVE_TYPES = [
+  "government", "political_opposition", "expert", "affected_group",
+  "advocacy_group", "business", "institution", "witness", "other_stakeholder"
+];
+
 export const OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -79,7 +84,7 @@ export const OUTPUT_SCHEMA = {
         additionalProperties: false,
         required: ["section", "text", "evidence_quote"],
         properties: {
-          section: { type: "string", enum: ["main_issue", "included_perspective", "review_question", "proposed_change", "affected_group", "sourced_supporter", "sourced_opponent", "unclear_impact"] },
+          section: { type: "string", enum: ["main_issue", "review_question", "proposed_change", "affected_group", "sourced_supporter", "sourced_opponent", "unclear_impact"] },
           text: { type: "string", minLength: 3, maxLength: 220 },
           evidence_quote: { type: "string", maxLength: 700 }
         }
@@ -96,9 +101,11 @@ export const OUTPUT_SCHEMA = {
           items: {
             type: "object",
             additionalProperties: false,
-            required: ["name", "evidence_quote"],
+            required: ["name", "affiliation", "source_type", "evidence_quote"],
             properties: {
               name: { type: "string", minLength: 1, maxLength: 140 },
+              affiliation: { type: "string", maxLength: 140 },
+              source_type: { type: "string", enum: PERSPECTIVE_TYPES },
               evidence_quote: { type: "string", minLength: 3, maxLength: 700 }
             }
           }
@@ -109,9 +116,12 @@ export const OUTPUT_SCHEMA = {
           items: {
             type: "object",
             additionalProperties: false,
-            required: ["text", "evidence_quote"],
+            required: ["name", "type", "position", "supported_by", "evidence_quote"],
             properties: {
-              text: { type: "string", minLength: 3, maxLength: 220 },
+              name: { type: "string", minLength: 2, maxLength: 140 },
+              type: { type: "string", enum: PERSPECTIVE_TYPES },
+              position: { type: "string", minLength: 3, maxLength: 220 },
+              supported_by: { type: "array", minItems: 1, maxItems: 6, items: { type: "string", minLength: 1, maxLength: 140 } },
               evidence_quote: { type: "string", minLength: 3, maxLength: 700 }
             }
           }
@@ -217,7 +227,11 @@ export function buildAnalysisPrompt(input) {
     "Create an overall article bias profile whose 0-100 score synthesizes the prevalence, severity, and centrality of framing cues across the whole article, including countervailing neutral or attributed language. Write exactly two polished sentences totaling 28-44 words: first explain how the article's framing, selection, and wording shape the reader's impression; then calibrate the strength and limits of that conclusion. Be specific and interpretive, not formulaic. Do not list absent categories, repeat the title, mention Ellipsis or the score, use sentence fragments, or treat factual emphasis alone as bias. This is not a truth, trust, or outlet-quality rating.",
     "Use Media Frames Corpus labels. Identify loaded or epistemic language, labeling, fear appeals, black-and-white framing, mind-reading, and causal oversimplification only when directly evidenced. Phrase possible omissions as questions.",
     "Return the complete summary, genre, main issue, frames, signals, named sources, attributed perspectives, concise review questions, and important terms that genuinely need a plain-English definition. For bills also return proposed changes, affected groups, sourced positions, and unclear impacts.",
-    "Every summary passage, frame quote, signal phrase/context, non-question finding, named source, perspective, and bill term must copy exact text from raw_text. Use empty arrays when unsupported.",
+    "For source_participation, work in two stages. First identify concrete people, organizations, institutions, or stakeholder groups whose statements, actions, or interests appear in raw_text as named_sources. Then derive broader attributed_perspectives only from those sources, linking each perspective with supported_by. A source is a quoted or attributed actor; a perspective is the broader stakeholder interest or viewpoint that actor represents. Do not simply turn every named entity into a perspective.",
+    "A valid perspective must name an identifiable stakeholder such as government officials, opposition politicians, local residents, medical experts, business owners, advocacy organizations, or people directly affected. Its type must be one of government, political_opposition, expert, affected_group, advocacy_group, business, institution, witness, or other_stakeholder. Its position must briefly describe the represented viewpoint or interest.",
+    "Never return dates, weekdays, months, times, locations, article topics, events, numbers, percentages, money amounts, quantities, laws, or proposals as perspectives. Labels such as Monday, Tuesday, July 14 2026, Pittsburgh, immigration, or the proposal are not stakeholders. Do not use a vague label without an identifiable person, organization, institution, or stakeholder group.",
+    "Every named source and perspective needs an exact supporting quotation or passage copied from raw_text. Every perspective must have at least one supported_by entry matching a concrete named source. If no stakeholder perspective meets these rules, return an empty attributed_perspectives array; never invent one to avoid an empty result.",
+    "Every summary passage, frame quote, signal phrase/context, non-question finding, named-source evidence_quote, perspective evidence_quote, and bill-term evidence_quote must copy exact text from raw_text. Use empty arrays when unsupported.",
     "Use web research to test every externally verifiable factual statement that materially affects the analysis, grouping related statements into at most three claim checks. Each check needs an exact source_quote, a supported/contradicted/unresolved/context_needed assessment, and one or two concise web citations.",
     "confidence_score and confidence_reason describe evidence coverage for internal validation; overall_bias describes the article's bias profile shown to the user.",
     "Return only JSON matching the provided schema.",

@@ -20,7 +20,7 @@ import {
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyPastedText, confidenceLabel } from "../lib/analysis";
-import { beginAiLogin, checkAiConnection, subscribeAiProgress } from "../lib/ai";
+import { beginAiLogin, checkAiConnection, NO_PERSPECTIVES_MESSAGE, subscribeAiProgress } from "../lib/ai";
 import { analyzePageWithBackend, biasProfileFromAssessment } from "../lib/backend";
 import { createManualPage, extractActivePage, highlightActivePagePassage } from "../lib/chrome";
 import {
@@ -234,8 +234,8 @@ function sourceContext(analysis: Analysis) {
   return `${analysis.sourceName} is the analyzed outlet or source. This page is classified as ${genreLabel(analysis.genre || "general").toLowerCase()}, and the analysis is grounded in the extracted article text.`;
 }
 
-function FindingList({ items, tone = "plain" }: { items: AnalysisFinding[]; tone?: "plain" | "included" | "question" }) {
-  if (!items.length) return <p className="panel-empty">No supported items were identified in the extracted source.</p>;
+function FindingList({ items, tone = "plain", emptyMessage = "No supported items were identified in the extracted source." }: { items: AnalysisFinding[]; tone?: "plain" | "included" | "question"; emptyMessage?: string }) {
+  if (!items.length) return <p className="panel-empty">{emptyMessage}</p>;
   return (
     <ul className={`finding-list is-${tone}`}>
       {items.map((item, index) => (
@@ -413,7 +413,7 @@ function PerspectivesPanel({ analysis }: { analysis: Analysis }) {
           <ul className="people-list">{analysis.quotedPeopleOrGroups.map((person, index) => <li key={`${person.text}-${index}`}><strong>{person.text}</strong><span>Named in the source</span></li>)}</ul>
         ) : <p className="panel-empty">No named source was reliably identified.</p>}
       </section>
-      <section className="prototype-section"><span className="prototype-label">Included</span><FindingList items={analysis.includedPerspectives} tone="included" /></section>
+      <section className="prototype-section"><span className="prototype-label">Included</span><FindingList items={analysis.includedPerspectives} tone="included" emptyMessage={NO_PERSPECTIVES_MESSAGE} /></section>
       <section className="prototype-section missing-block"><span className="prototype-label">Possibly missing</span><FindingList items={analysis.missingPerspectives} tone="question" /></section>
     </div>
   );

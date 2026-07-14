@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createNativeMessageDecoder, encodeNativeMessage } from "./native-protocol.mjs";
 import { EXTENSION_ID, hostManifest, sourceLauncherContents } from "./install.mjs";
 import { configuredMcpServerNames, RESTRICTED_FEATURES, restrictedCodexConfig } from "./restrictions.mjs";
-import { codexItemIsAllowed, codexTraceItemId, compactReasoningSummary } from "./analysis.mjs";
+import { buildAnalysisPrompt, codexItemIsAllowed, codexTraceItemId, compactReasoningSummary, OUTPUT_SCHEMA } from "./analysis.mjs";
 import { buildClaudeAnalysisArgs, claudeToolIsAllowed, consumeClaudeMessage, createClaudeTraceState, parseClaudeAuthStatus, structuredClaudeOutput } from "./claude.mjs";
 import { providerFromPayload } from "./host.mjs";
 
@@ -64,6 +64,18 @@ describe("Chrome Native Messaging protocol", () => {
     const result = compactReasoningSummary("I need to search for the official record and compare it with a second source before deciding how the claim affects the analysis. Then I should format the JSON output and verify every field.");
     expect(result.length).toBeLessThanOrEqual(150);
     expect(result.split(/[.!?]/).filter(Boolean)).toHaveLength(1);
+  });
+
+  it("constrains perspectives to sourced stakeholder viewpoints", () => {
+    const sourceParticipation = OUTPUT_SCHEMA.properties.source_participation.properties;
+    expect(sourceParticipation.attributed_perspectives.items.properties.type.enum).toEqual([
+      "government", "political_opposition", "expert", "affected_group",
+      "advocacy_group", "business", "institution", "witness", "other_stakeholder"
+    ]);
+    expect(sourceParticipation.attributed_perspectives.items.required).toEqual(["name", "type", "position", "supported_by", "evidence_quote"]);
+    const { prompt } = buildAnalysisPrompt({ raw_text: "A sufficiently long article passage says that Jane Smith of the City Council supports the proposal because it would reduce costs for local residents and small businesses." });
+    expect(prompt).toMatch(/source is a quoted or attributed actor; a perspective is the broader stakeholder interest/i);
+    expect(prompt).toMatch(/Monday, Tuesday, July 14 2026, Pittsburgh, immigration/i);
   });
 
   it("dispatches provider-aware native requests", () => {

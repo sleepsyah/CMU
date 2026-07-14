@@ -80,6 +80,7 @@ const TERM_GLOSSARY: Record<string, string> = {
 };
 
 const GENERIC_SOURCE_NAMES = /^(supporters|opponents|critics|advocates|officials|experts|researchers|lawmakers|people|residents|students|workers)$/i;
+const TEMPORAL_SOURCE_NAMES = /^(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|yesterday|morning|afternoon|evening|night)$/i;
 const NAME_PART = "[A-Z][A-Za-z&.'’–-]+";
 const NAMED_ACTOR = `${NAME_PART}(?:\\s+(?:(?:of|the|and|for|in|on)\\s+)?${NAME_PART}){0,6}`;
 const MACHINE_SERIALIZATION = /(?:\bArray\s*\(\s*(?:\[[^\]]+\]\s*=>)?|\[(?:actionDate|displayText|externalActionCode|description|chamberOfAction|type|text)\]\s*=>|\b(?:Introduced|Passed(?:\/agreed to)?|Became Law|Committee)Array\s*\()/i;
@@ -362,7 +363,9 @@ function quotedSources(text: string) {
   const patterns = [
     new RegExp(`(?:According to|according to)\\s+(?:the\\s+)?(${NAMED_ACTOR})`, "g"),
     new RegExp(`(${NAMED_ACTOR})\\s+(?:said|says|told|wrote|argued)\\b`, "g"),
-    new RegExp(`(?:said|says|told|wrote|argued)\\s+(${NAMED_ACTOR})`, "g")
+    // Inverted attribution is valid after a closing quote; unrestricted "said Name"
+    // also misreads temporal modifiers in phrases such as "said Monday" as sources.
+    new RegExp(`[\"”][,;:]?\\s+(?:said|says|told|wrote|argued)\\s+(${NAMED_ACTOR})`, "g")
   ];
 
   for (const sentence of sentences) {
@@ -370,7 +373,7 @@ function quotedSources(text: string) {
       pattern.lastIndex = 0;
       for (const match of sentence.matchAll(pattern)) {
         const name = normalizeWhitespace(match[1] || "").replace(/^The\s+/i, "");
-        if (name.length > 2 && name.length < 80 && !GENERIC_SOURCE_NAMES.test(name)) values.set(name, sentence);
+        if (name.length > 2 && name.length < 80 && !GENERIC_SOURCE_NAMES.test(name) && !TEMPORAL_SOURCE_NAMES.test(name)) values.set(name, sentence);
         if (values.size >= 10) break;
       }
     }
@@ -380,14 +383,14 @@ function quotedSources(text: string) {
 
 function perspectiveFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[], quoted: ReturnType<typeof quotedSources>) {
   const results: AnalysisFinding[] = [];
+  // A quoted actor is a source, not automatically a broader stakeholder perspective.
   for (const source of quoted) {
-    const evidenceId = addEvidence(evidenceItems, page, {
+    addEvidence(evidenceItems, page, {
       claim: `Attributed source identified: ${source.name}.`,
       supportingText: source.sentence,
       explanation: "The source is named in an attribution pattern. This does not establish the source's viewpoint or expertise.",
       confidenceScore: 66
     });
-    results.push(finding(`Attributed perspective from ${source.name}.`, [evidenceId], 66));
   }
 
   const viewpointPatterns = [
@@ -574,23 +577,8 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
     const existing = evidenceItems.find((item) => item.claim.includes(source.name));
     return finding(source.name, existing ? [existing.id] : [], 66);
   });
-  const displayedIncluded = included.length
-    ? included
-    : [
-        finding(
-          "No named or explicitly labeled perspectives were reliably detected.",
-          [
-            addAnalysisNote(
-              evidenceItems,
-              page,
-              "No perspectives reliably detected.",
-              "The local attribution parser returned no named or explicitly labeled viewpoints.",
-              "This may reflect extraction limits rather than the source itself."
-            )
-          ],
-          32
-        )
-      ];
+  // Empty is meaningful: the UI explains that no stakeholder perspective was reliably identified.
+  const displayedIncluded = included;
   const confidenceScore = confidenceFor(page, evidenceItems);
 
   return {

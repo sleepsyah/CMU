@@ -47,13 +47,13 @@ interface AiPayload {
   }>;
   review_questions: string[];
   findings: Array<{
-    section: "main_issue" | "included_perspective" | "review_question" | "proposed_change" | "affected_group" | "sourced_supporter" | "sourced_opponent" | "unclear_impact";
+    section: "main_issue" | "review_question" | "proposed_change" | "affected_group" | "sourced_supporter" | "sourced_opponent" | "unclear_impact";
     text: string;
     evidence_quote: string;
   }>;
   source_participation: {
-    named_sources: Array<{ name: string; evidence_quote: string }>;
-    attributed_perspectives: Array<{ text: string; evidence_quote: string }>;
+    named_sources: AiNamedSource[];
+    attributed_perspectives: AiPerspective[];
   };
   important_terms: Array<{
     term: string;
@@ -77,6 +77,100 @@ interface AiPayload {
     usage?: { input_tokens?: number; output_tokens?: number; reasoning_output_tokens?: number } | null;
     web_search_queries?: string[];
   };
+}
+
+export const PERSPECTIVE_TYPES = [
+  "government", "political_opposition", "expert", "affected_group",
+  "advocacy_group", "business", "institution", "witness", "other_stakeholder"
+] as const;
+export const NO_PERSPECTIVES_MESSAGE = "No clearly represented stakeholder perspectives were identified.";
+
+type PerspectiveType = typeof PERSPECTIVE_TYPES[number];
+
+interface AiNamedSource {
+  name: string;
+  affiliation: string;
+  source_type: PerspectiveType;
+  evidence_quote: string;
+}
+
+interface AiPerspective {
+  name: string;
+  type: PerspectiveType;
+  position: string;
+  supported_by: string[];
+  evidence_quote: string;
+}
+
+const NON_STAKEHOLDER_NAME = /^(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|yesterday|immigration|healthcare|education|housing|the (?:bill|law|proposal|policy|plan|event|election|meeting|hearing|protest))$/i;
+const DATE_OR_NUMBER_NAME = /^(?:[$€£¥]\s*)?(?:\d[\d,]*(?:\.\d+)?)(?:\s*(?:%|percent|dollars?|euros?|pounds?|people|items?|days?|weeks?|months?|years?))?$|^(?:\d{1,2}[:/]\d{1,2}(?::\d{2})?(?:\s*[ap]m)?|\d{4}-\d{1,2}-\d{1,2}|[A-Za-z]+\s+\d{1,2}(?:,\s*\d{4})?)$/i;
+const STAKEHOLDER_LABEL = /\b(?:administration|agency|association|authority|advocates?|business(?:es| owners?)?|coalition|committee|community|company|corporation|council|department|employees?|experts?|families|foundation|government|group|hospital|institution|lawmakers?|officials?|opposition|organization|owners?|patients?|people|politicians?|residents?|researchers?|school|scientists?|staff|students?|tenants?|union|university|voters?|witnesses?|workers?)\b/i;
+const SOURCE_ACTION = /\b(?:according to|affected|announced|approved|argued|called for|challenged|criticized|endorsed|explained|faces?|filed|found|objected|opposed|rejected|reported|represents?|requested|said|says|stated|sued|supported|told|voted|warned|wrote|(?:could|must|will|would)\s+(?:lose|pay|receive))\b/i;
+const ORGANIZATION_SUFFIX = /\b(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Corporation|Association|Council|Department|University|Committee|Agency|Office|Foundation|Union|Coalition|Institute|Hospital|School)\b/i;
+
+function invalidNonStakeholderName(value: string) {
+  const name = bounded(value, 140);
+  return !name || NON_STAKEHOLDER_NAME.test(name) || DATE_OR_NUMBER_NAME.test(name);
+}
+
+function looksLikeConcreteSource(name: string) {
+  if (STAKEHOLDER_LABEL.test(name) || ORGANIZATION_SUFFIX.test(name) || /^[A-Z][A-Z0-9&.-]{1,11}$/.test(name)) return true;
+  return /^(?:[A-Z][A-Za-z.'’–-]+)(?:\s+(?:[A-Z][A-Za-z.'’–-]+)){1,5}$/.test(name);
+}
+
+function looksLikeStakeholderPerspective(name: string, sources: AiNamedSource[]) {
+  if (STAKEHOLDER_LABEL.test(name) || ORGANIZATION_SUFFIX.test(name) || /^[A-Z][A-Z0-9&.-]{1,11}$/.test(name)) return true;
+  return sources.some((source) => normalized(source.affiliation) === normalized(name) && STAKEHOLDER_LABEL.test(source.affiliation));
+}
+
+/** Sources are concrete attributed actors; perspectives are broader stakeholder viewpoints supported by them. */
+export function validateSourceParticipation(
+  sourceText: string,
+  participation: { named_sources?: unknown; attributed_perspectives?: unknown }
+) {
+  const rawSources = Array.isArray(participation?.named_sources) ? participation.named_sources : [];
+  const namedSources = rawSources
+    .map((value): AiNamedSource | null => {
+      const item = value as Partial<AiNamedSource>;
+      const name = bounded(String(item?.name || ""), 140);
+      const affiliation = bounded(String(item?.affiliation || ""), 140);
+      const evidence = matchedSourceQuote(sourceText, String(item?.evidence_quote || ""));
+      if (invalidNonStakeholderName(name) || !looksLikeConcreteSource(name) || !evidence || !PERSPECTIVE_TYPES.includes(item.source_type as PerspectiveType)) return null;
+      const evidenceText = normalized(evidence);
+      if (!evidenceText.includes(normalized(name)) && (!affiliation || !evidenceText.includes(normalized(affiliation)))) return null;
+      if (!SOURCE_ACTION.test(evidence)) return null;
+      return { name, affiliation, source_type: item.source_type as PerspectiveType, evidence_quote: evidence };
+    })
+    .filter((item): item is AiNamedSource => Boolean(item))
+    .filter((item, index, values) => values.findIndex((candidate) => normalized(candidate.name) === normalized(item.name)) === index)
+    .slice(0, 6);
+
+  const sourceByName = new Map(namedSources.map((source) => [normalized(source.name), source]));
+  const rawPerspectives = Array.isArray(participation?.attributed_perspectives) ? participation.attributed_perspectives : [];
+  const perspectives = rawPerspectives
+    .map((value): AiPerspective | null => {
+      const item = value as Partial<AiPerspective>;
+      const name = bounded(String(item?.name || ""), 140);
+      const position = bounded(String(item?.position || ""), 220);
+      const evidence = matchedSourceQuote(sourceText, String(item?.evidence_quote || ""));
+      const supportedBy = Array.isArray(item?.supported_by)
+        ? item.supported_by.map((source) => bounded(String(source || ""), 140)).filter(Boolean)
+        : [];
+      const supportingSources = supportedBy.map((source) => sourceByName.get(normalized(source))).filter((source): source is AiNamedSource => Boolean(source));
+      if (invalidNonStakeholderName(name) || !position || !evidence || !PERSPECTIVE_TYPES.includes(item.type as PerspectiveType)) return null;
+      if (!looksLikeStakeholderPerspective(name, namedSources) || !supportingSources.length) return null;
+      const evidenceText = normalized(evidence);
+      if (!supportingSources.some((source) => evidenceText.includes(normalized(source.name)) || normalized(source.evidence_quote) === evidenceText)) return null;
+      return { name, type: item.type as PerspectiveType, position, supported_by: supportingSources.map((source) => source.name), evidence_quote: evidence };
+    })
+    .filter((item): item is AiPerspective => Boolean(item))
+    .filter((item, index, values) => {
+      const key = `${normalized(item.name)}:${item.type}:${normalized(item.position)}`;
+      return values.findIndex((candidate) => `${normalized(candidate.name)}:${candidate.type}:${normalized(candidate.position)}` === key) === index;
+    })
+    .slice(0, 6);
+
+  return { namedSources, perspectives };
 }
 
 interface NativeResponse<T> {
@@ -235,7 +329,9 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     .filter((item): item is AnalysisFinding & { section: AiPayload["findings"][number]["section"] } => Boolean(item))
     .slice(0, 8);
 
-  const namedSources = payload.source_participation.named_sources
+  // Validate AI-generated sources and perspectives before either can reach the UI.
+  const validatedParticipation = validateSourceParticipation(sourceText, payload.source_participation);
+  const namedSources = validatedParticipation.namedSources
     .map((item): AnalysisFinding | null => {
       const quote = matchedSourceQuote(sourceText, item.evidence_quote);
       const name = bounded(item.name, 140);
@@ -245,10 +341,10 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     })
     .filter((item): item is AnalysisFinding => Boolean(item));
 
-  const attributedPerspectives = payload.source_participation.attributed_perspectives
+  const attributedPerspectives = validatedParticipation.perspectives
     .map((item): AnalysisFinding | null => {
       const quote = matchedSourceQuote(sourceText, item.evidence_quote);
-      const text = bounded(item.text, 220);
+      const text = bounded(`${item.name}: ${item.position}`, 220);
       if (!quote || !text) return null;
       const evidenceId = addSourceEvidence(evidence, analysis, "Attributed perspective identified by AI.", quote, "The AI tied this perspective to an exact source passage.");
       return { text, evidenceIds: [evidenceId], confidenceScore: 68, confidenceLabel: "Medium" };
@@ -356,10 +452,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
   if (analysis.contentType === "article") {
     const mainIssue = aiFindings.find((item) => item.section === "main_issue");
     if (!mainIssue) throw new Error(`${providerName} did not return a source-linked main issue for the complete article analysis.`);
-    const includedPerspectives = dedupeFindings([
-      ...attributedPerspectives,
-      ...aiFindings.filter((item) => item.section === "included_perspective")
-    ]).slice(0, 8);
+    const includedPerspectives = dedupeFindings(attributedPerspectives).slice(0, 8);
     const findingQuestions = aiFindings.filter((item) => item.section === "review_question");
     const framingNotes = frames.map((frame): AnalysisFinding => ({
       text: frame.explanation,

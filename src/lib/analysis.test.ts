@@ -32,8 +32,28 @@ describe("article analysis", () => {
     expect(analysis.contentType).toBe("article");
     if (analysis.contentType !== "article") return;
     expect(analysis.quotedPeopleOrGroups.map((item) => item.text)).toContain("Jordan Lee");
+    expect(analysis.includedPerspectives.map((item) => item.text).join(" ")).not.toContain("Jordan Lee");
     expect(analysis.includedPerspectives.map((item) => item.text).join(" ")).not.toMatch(/business perspective/i);
     expect(analysis.confidenceScore).toBeLessThan(75);
+  });
+
+  it("does not treat CBS-style weekday attribution modifiers as sources or perspectives", () => {
+    const analysis = analyzePage(
+      page({
+        text: [
+          "The United Arab Emirates Ministry of Defense said Monday that Iranian cruise missiles hit two oil tankers in the Strait of Hormuz.",
+          "A government spokesperson said Tuesday that officials were monitoring the attacks and would publish another statement.",
+          "\"We remain concerned about commercial shipping,\" said Jane Smith after the briefing."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    const sources = analysis.quotedPeopleOrGroups.map((item) => item.text);
+    const perspectives = analysis.includedPerspectives.map((item) => item.text);
+    expect(sources).toContain("Jane Smith");
+    expect(sources).not.toEqual(expect.arrayContaining(["Monday", "Tuesday"]));
+    expect(perspectives.join(" ")).not.toMatch(/\b(?:Monday|Tuesday)\b/i);
   });
 
   it("links every displayed article finding to a known evidence item", () => {

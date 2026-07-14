@@ -43,9 +43,12 @@ These weights are an interpretable prototype, not a statistically calibrated pro
 6. Require structured output for summary evidence, an article-level bias profile, internal evidence confidence, Media Frames Corpus labels, span-level cues, review questions, and claim-level research checks.
 7. Reject summary evidence, frame evidence, and bias cues whose quoted text cannot be matched to the supplied source.
 8. Require each claim check to match an exact passage from the supplied source and include at least one valid web citation.
-9. Stop the AI run if Codex attempts a blocked tool category.
-10. Keep omission and missing-perspective output phrased as questions.
-11. Run the complete local analysis only when AI is disabled or connector startup, authentication, the SDK run, schema validation, evidence matching, or restriction verification fails.
+9. Identify concrete attributed sources before deriving broader stakeholder perspectives. A source is a person, organization, institution, or stakeholder group whose statement or interest appears in the article; a perspective is the viewpoint or interest represented by that source.
+10. Restrict perspective types to government, political opposition, expert, affected group, advocacy group, business, institution, witness, or other stakeholder. Before display, reject unsupported evidence, unknown types, duplicates, and non-stakeholder labels corresponding to `DATE`, `TIME`, `PERCENT`, `MONEY`, `QUANTITY`, `ORDINAL`, or `CARDINAL` entities, plus locations, topics, and events. Lightweight JavaScript checks remain active even when the optional Python NLP helper is unavailable.
+11. Show “No clearly represented stakeholder perspectives were identified.” when validation leaves no perspectives. Ellipsis does not invent a perspective to fill an empty result.
+12. Stop the AI run if Codex attempts a blocked tool category.
+13. Keep omission and missing-perspective output phrased as questions.
+14. Run the complete local analysis only when AI is disabled or connector startup, authentication, the SDK run, schema validation, evidence matching, or restriction verification fails.
 
 AI confidence measures extraction coverage and evidence support. It is capped and is not a probability that the analysis or source is true.
 
