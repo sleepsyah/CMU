@@ -1,6 +1,9 @@
 import { cleanReadableSourceText, confidenceLabel, FRAME_LABELS } from "./analysis";
 import type {
   AiAnalysis,
+  AiConnectionStatus,
+  AiLoginResult,
+  AiProvider,
   Analysis,
   AnalysisTraceEvent,
   AnalysisFinding,
@@ -8,8 +11,6 @@ import type {
   BiasDimension,
   BiasMetric,
   BiasSignal,
-  CodexConnectionStatus,
-  CodexLoginResult,
   EvidenceItem,
   ExtractedPage,
   FactCheck,
@@ -18,7 +19,7 @@ import type {
   FrameSignal
 } from "../types";
 
-interface CodexPayload {
+interface AiPayload {
   summary: string;
   summary_evidence: string[];
   genre: ArticleGenre;
@@ -84,52 +85,74 @@ interface NativeResponse<T> {
   error?: string;
 }
 
-async function nativeRequest<T>(action: "status" | "login" | "analyze", payload?: unknown): Promise<T> {
+async function nativeRequest<T>(action: "status" | "login" | "analyze", provider: AiProvider, payload?: Record<string, unknown>): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.id) {
     throw new Error("The Ellipsis AI Connector is available only in the installed Chrome extension.");
   }
-  const response = await chrome.runtime.sendMessage({ type: "ellipsis.codex.request", action, payload }) as NativeResponse<T>;
+  const response = await chrome.runtime.sendMessage({ type: "ellipsis.ai.request", action, payload: { ...payload, provider } }) as NativeResponse<T>;
   if (!response?.ok || response.result === undefined) throw new Error(response?.error || "Ellipsis AI Connector did not respond.");
   return response.result;
 }
 
-export async function checkCodexConnection(): Promise<CodexConnectionStatus> {
-  return nativeRequest<CodexConnectionStatus>("status");
+export async function checkAiConnection(provider: AiProvider): Promise<AiConnectionStatus> {
+  return nativeRequest<AiConnectionStatus>("status", provider);
 }
 
-export async function beginCodexLogin(): Promise<CodexLoginResult> {
-  return nativeRequest<CodexLoginResult>("login");
+export async function beginAiLogin(provider: AiProvider): Promise<AiLoginResult> {
+  return nativeRequest<AiLoginResult>("login", provider);
 }
 
-export function subscribeCodexProgress(listener: (event: AnalysisTraceEvent) => void) {
+export function subscribeAiProgress(listener: (event: AnalysisTraceEvent) => void) {
   if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) return () => {};
   const handleMessage = (message: { type?: string; event?: AnalysisTraceEvent }) => {
-    if (message?.type === "ellipsis.codex.progress" && message.event) listener(message.event);
+    if (message?.type === "ellipsis.ai.progress" && message.event) listener(message.event);
   };
   chrome.runtime.onMessage.addListener(handleMessage);
   return () => chrome.runtime.onMessage.removeListener(handleMessage);
 }
 
-export async function enhanceAnalysisWithCodex(analysis: Analysis, page: ExtractedPage, traceId = ""): Promise<Analysis> {
+export async function enhanceAnalysisWithAi(
+  analysis: Analysis,
+  page: ExtractedPage,
+  provider: AiProvider,
+  traceId = "",
+  supportingAssessment?: BackendBiasAnalysis
+): Promise<Analysis> {
   const readableText = cleanReadableSourceText(page.text).slice(0, 30_000);
-  const payload = await nativeRequest<CodexPayload>("analyze", {
+  const payload = await nativeRequest<AiPayload>("analyze", provider, {
     title: analysis.pageTitle,
     source_name: analysis.sourceName,
     content_type: analysis.contentType,
     trace_id: traceId,
-    raw_text: readableText
+    raw_text: readableText,
+    local_model_context: supportingAssessment ? modelSupportForAi(supportingAssessment) : undefined
   });
-  if (!isCodexPayload(payload)) throw new Error("Local Codex returned an invalid analysis shape.");
-  return applyCodexPayload(analysis, readableText, payload);
+  if (!isAiPayload(payload)) throw new Error(`${providerLabel(provider)} returned an invalid analysis shape.`);
+  return applyAiPayload(analysis, readableText, payload, provider, supportingAssessment);
 }
 
-function applyCodexPayload(analysis: Analysis, sourceText: string, payload: CodexPayload): Analysis {
+export function checkCodexConnection() {
+  return checkAiConnection("codex");
+}
+
+export function beginCodexLogin() {
+  return beginAiLogin("codex");
+}
+
+export const subscribeCodexProgress = subscribeAiProgress;
+
+export function enhanceAnalysisWithCodex(analysis: Analysis, page: ExtractedPage, traceId = "") {
+  return enhanceAnalysisWithAi(analysis, page, "codex", traceId);
+}
+
+function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPayload, provider: AiProvider, supportingAssessment?: BackendBiasAnalysis): Analysis {
+  const providerName = providerLabel(provider);
   const evidence: EvidenceItem[] = [];
   const summaryEvidenceIds = payload.summary_evidence
     .map((quote) => matchedSourceQuote(sourceText, quote))
     .filter((quote): quote is string => Boolean(quote))
     .slice(0, 2)
-    .map((quote) => addSourceEvidence(evidence, analysis, "Source passage supporting the AI summary.", quote, "Codex selected this exact source passage to support its summary."));
+    .map((quote) => addSourceEvidence(evidence, analysis, "Source passage supporting the AI summary.", quote, `${providerName} selected this exact source passage to support its summary.`));
 
   const frames = payload.frames
     .filter((frame) => FRAME_LABELS.includes(frame.label) && Array.isArray(frame.evidence_quotes) && Number.isFinite(frame.strength))
@@ -152,7 +175,7 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
         strength: clamp(Math.round(frame.strength), 1, 100),
         explanation: bounded(frame.explanation, 240),
         evidenceIds,
-        source: "local-codex"
+        source: provider === "claude" ? "local-ai" : "local-codex"
       };
     })
     .filter((frame): frame is FrameSignal => Boolean(frame))
@@ -160,7 +183,7 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
 
   const aiSignals = payload.signals
     .map((signal): BiasSignal | null => {
-      if (!["political", "gender", "ethnicity"].includes(signal.dimension)) return null;
+      if (!["political", "gender", "ethnicity", "class"].includes(signal.dimension)) return null;
       if (!["loaded_language", "epistemic_framing", "persuasion", "stereotype_association"].includes(signal.category)) return null;
       if (![1, 2, 3].includes(signal.severity)) return null;
       const context = matchedSourceQuote(sourceText, signal.context);
@@ -179,7 +202,7 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
     })
     .filter((signal): signal is BiasSignal => Boolean(signal))
     .filter((signal, index, values) => values.findIndex((item) => `${item.dimension}:${normalized(item.phrase)}:${normalized(item.context)}` === `${signal.dimension}:${normalized(signal.phrase)}:${normalized(signal.context)}`) === index)
-    .slice(0, 6);
+    .slice(0, 8);
 
   const signalEvidenceIds = new Map<string, string>();
   for (const signal of aiSignals) {
@@ -194,7 +217,7 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
   }
 
   const aiFindings = payload.findings
-    .map((item): (AnalysisFinding & { section: CodexPayload["findings"][number]["section"] }) | null => {
+    .map((item): (AnalysisFinding & { section: AiPayload["findings"][number]["section"] }) | null => {
       const text = bounded(item.text, 220);
       if (!text) return null;
       if (item.section === "review_question") return { ...analysisQuestion(evidence, text), section: item.section };
@@ -205,11 +228,11 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
         analysis,
         `AI-assisted ${item.section.replaceAll("_", " ")} evidence.`,
         quote,
-        "Codex used this exact source passage for the corresponding finding."
+        `${providerName} used this exact source passage for the corresponding finding.`
       );
       return { text, evidenceIds: [evidenceId], confidenceScore: 66, confidenceLabel: "Medium", section: item.section };
     })
-    .filter((item): item is AnalysisFinding & { section: CodexPayload["findings"][number]["section"] } => Boolean(item))
+    .filter((item): item is AnalysisFinding & { section: AiPayload["findings"][number]["section"] } => Boolean(item))
     .slice(0, 8);
 
   const namedSources = payload.source_participation.named_sources
@@ -274,12 +297,8 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
     .filter((item): item is FactCheck => Boolean(item))
     .slice(0, 3);
 
-  if (!factChecks.length || !payload._trace?.web_search_queries?.length) {
-    throw new Error("Codex did not return a source-matched, web-researched claim check.");
-  }
-
   if (!summaryEvidenceIds.length && !frames.length && !aiSignals.length && !aiFindings.length) {
-    throw new Error("Codex did not return evidence-linked enhancements.");
+    throw new Error(`${providerName} did not return evidence-linked enhancements.`);
   }
 
   const reviewQuestions = payload.review_questions
@@ -291,11 +310,12 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
   const evidenceBonus = Math.min(8, summaryEvidenceIds.length + frames.length + aiSignals.length + aiFindings.length);
   const confidenceScore = clamp(aiConfidence + evidenceBonus, 30, 88);
   const confidenceReason = confidenceScore < 50
-    ? "The extracted sample is short, so document-level framing and omission conclusions remain limited. Codex evidence was matched to the supplied source, but this is not factuality confidence."
+    ? `The extracted sample is short, so document-level framing and omission conclusions remain limited. ${providerName} evidence was matched to the supplied source, but this is not factuality confidence.`
     : `${bounded(payload.confidence_reason, 260)} This confidence reflects source coverage and evidence matching, not factual accuracy.`;
   const aiAnalysis: AiAnalysis = {
-    source: "local-codex",
-    model: "gpt-5.5",
+    source: provider === "claude" ? "local-ai" : "local-codex",
+    provider,
+    model: provider === "claude" ? "claude-sonnet-4-6" : "gpt-5.5",
     reasoningEffort: "low",
     summaryEvidenceIds,
     confidenceScore,
@@ -308,6 +328,7 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
     runtimeMs: Math.max(0, Math.round(payload._trace?.runtime_ms || 0)),
     summaryRefined: summaryEvidenceIds.length > 0 && normalized(payload.summary) !== normalized(analysis.summary),
     webSearchCount: payload._trace?.web_search_queries?.length || 0,
+    localModelSupport: supportingAssessment?.source === "hybrid-backend",
     outputSummary: bounded(payload.summary, 500),
     factChecks,
     researchSourceCount: new Set(factChecks.flatMap((item) => item.citations.map((citation) => citation.url))).size,
@@ -327,13 +348,14 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
       summary: bounded(payload.overall_bias.summary, 280)
     },
     evidence: dedupeEvidence(evidence),
-    backendBias: aiBiasAssessment(aiSignals),
+    backendBias: aiBiasAssessment(aiSignals, provider),
+    vocabularyTerms: importantTerms.map((item) => ({ term: item.term, meaning: item.meaning, evidenceIds: item.evidenceIds })),
     aiAnalysis
   };
 
   if (analysis.contentType === "article") {
     const mainIssue = aiFindings.find((item) => item.section === "main_issue");
-    if (!mainIssue) throw new Error("Codex did not return a source-linked main issue for the complete article analysis.");
+    if (!mainIssue) throw new Error(`${providerName} did not return a source-linked main issue for the complete article analysis.`);
     const includedPerspectives = dedupeFindings([
       ...attributedPerspectives,
       ...aiFindings.filter((item) => item.section === "included_perspective")
@@ -375,7 +397,7 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
   }
 
   const mainIssue = aiFindings.find((item) => item.section === "main_issue");
-  if (!mainIssue) throw new Error("Codex did not return a source-linked main issue for the complete bill analysis.");
+  if (!mainIssue) throw new Error(`${providerName} did not return a source-linked main issue for the complete bill analysis.`);
   return {
     ...analysis,
     ...sharedUpdates,
@@ -393,13 +415,14 @@ function applyCodexPayload(analysis: Analysis, sourceText: string, payload: Code
   };
 }
 
-function aiBiasAssessment(signals: BiasSignal[]): BackendBiasAnalysis {
+function aiBiasAssessment(signals: BiasSignal[], provider: AiProvider): BackendBiasAnalysis {
   return {
-    source: "codex-enhanced",
+    source: provider === "claude" ? "ai-enhanced" : "codex-enhanced",
     scores: {
       political_bias: aiMetric(signals, "political"),
       gender_bias: aiMetric(signals, "gender"),
-      ethnicity_bias: aiMetric(signals, "ethnicity")
+      ethnicity_bias: aiMetric(signals, "ethnicity"),
+      class_bias: aiMetric(signals, "class")
     },
     linguistic_evidence: {
       spin_words_detected: signals.filter((signal) => signal.dimension === "political").map((signal) => signal.phrase),
@@ -467,7 +490,7 @@ function matchedSourceQuote(sourceText: string, candidate: string) {
   return normalized(sourceText).includes(normalized(quote)) ? quote : null;
 }
 
-function isCodexPayload(value: CodexPayload) {
+function isAiPayload(value: AiPayload) {
   return Boolean(
     value && typeof value.summary === "string" &&
     Array.isArray(value.summary_evidence) &&
@@ -488,6 +511,39 @@ function isCodexPayload(value: CodexPayload) {
   );
 }
 
+export function aiProviderLabel(provider: AiProvider) {
+  return provider === "claude" ? "Claude Code" : "Codex";
+}
+
+function providerLabel(provider: AiProvider) {
+  return aiProviderLabel(provider);
+}
+
+function modelSupportForAi(assessment: BackendBiasAnalysis) {
+  const metric = (value: BiasMetric) => ({
+    score: value.score,
+    confidence: value.confidence,
+    evidence_count: value.evidenceCount,
+    status: value.status
+  });
+  return {
+    source: assessment.source,
+    scores: {
+      political: metric(assessment.scores.political_bias),
+      gender: metric(assessment.scores.gender_bias),
+      ethnicity: metric(assessment.scores.ethnicity_bias),
+      class: metric(assessment.scores.class_bias)
+    },
+    source_matched_signals: assessment.linguistic_evidence.signals.slice(0, 10).map((signal) => ({
+      dimension: signal.dimension,
+      category: signal.category,
+      phrase: signal.phrase,
+      context: signal.context,
+      severity: signal.severity
+    }))
+  };
+}
+
 function validWebUrl(value: string) {
   try {
     const parsed = new URL(value);
@@ -500,6 +556,7 @@ function validWebUrl(value: string) {
 function dimensionLabel(dimension: BiasDimension) {
   if (dimension === "gender") return "Gender framing";
   if (dimension === "ethnicity") return "Ethnicity framing";
+  if (dimension === "class") return "Class framing";
   return "Political wording";
 }
 

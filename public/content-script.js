@@ -1,11 +1,17 @@
 const MIN_ARTICLE_WORDS = 90;
 const MIN_ARTICLE_SENTENCES = 2;
+const HIGHLIGHT_CLASS = "ellipsis-source-highlight";
+const HIGHLIGHT_STYLE_ID = "ellipsis-source-highlight-style";
 
 function cleanInline(value) {
   return String(value || "")
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeForSearch(value) {
+  return cleanInline(value).toLowerCase();
 }
 
 function countWords(text) {
@@ -154,6 +160,135 @@ function extractReadableText() {
   return best.text.slice(0, 30000);
 }
 
+function ensureHighlightStyle() {
+  if (document.getElementById(HIGHLIGHT_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = HIGHLIGHT_STYLE_ID;
+  style.textContent = `
+    .${HIGHLIGHT_CLASS} {
+      background: #fff3a3 !important;
+      color: inherit !important;
+      border-radius: 3px !important;
+      box-shadow: 0 0 0 2px #fff3a3 !important;
+      scroll-margin-top: 96px !important;
+    }
+  `;
+  document.documentElement.appendChild(style);
+}
+
+function clearSourceHighlights() {
+  document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach((mark) => {
+    if (mark.tagName !== "MARK") {
+      mark.classList.remove(HIGHLIGHT_CLASS);
+      return;
+    }
+    const parent = mark.parentNode;
+    if (!parent) return;
+    mark.replaceWith(document.createTextNode(mark.textContent || ""));
+    parent.normalize();
+  });
+}
+
+function textNodesIn(element) {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!cleanInline(node.nodeValue || "")) return NodeFilter.FILTER_REJECT;
+      const parent = node.parentElement;
+      if (!parent || !isVisible(parent)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  return nodes;
+}
+
+function normalizedIndexMap(text) {
+  let normalized = "";
+  const map = [];
+  let inWhitespace = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (/\s/.test(char)) {
+      if (!inWhitespace && normalized.length > 0) {
+        normalized += " ";
+        map.push(index);
+      }
+      inWhitespace = true;
+    } else {
+      normalized += char.toLowerCase();
+      map.push(index);
+      inWhitespace = false;
+    }
+  }
+  return { normalized: normalized.trim(), map };
+}
+
+function rangeForRawOffsets(element, startOffset, endOffset) {
+  const nodes = textNodesIn(element);
+  let cursor = 0;
+  const range = document.createRange();
+  let started = false;
+
+  for (const node of nodes) {
+    const length = node.nodeValue?.length || 0;
+    const nodeStart = cursor;
+    const nodeEnd = cursor + length;
+    if (!started && startOffset >= nodeStart && startOffset <= nodeEnd) {
+      range.setStart(node, Math.max(0, startOffset - nodeStart));
+      started = true;
+    }
+    if (started && endOffset >= nodeStart && endOffset <= nodeEnd) {
+      range.setEnd(node, Math.max(0, endOffset - nodeStart));
+      return range;
+    }
+    cursor = nodeEnd;
+  }
+  return null;
+}
+
+function highlightWithinElement(element, excerpt) {
+  const source = normalizedIndexMap(element.textContent || "");
+  const target = normalizeForSearch(excerpt);
+  if (!source.normalized || !target) return null;
+  const start = source.normalized.indexOf(target);
+  if (start < 0) return null;
+  const rawStart = source.map[start];
+  const rawEnd = source.map[start + target.length - 1] + 1;
+  const range = rangeForRawOffsets(element, rawStart, rawEnd);
+  if (!range || range.collapsed) return null;
+  const mark = document.createElement("mark");
+  mark.className = HIGHLIGHT_CLASS;
+  try {
+    range.surroundContents(mark);
+  } catch {
+    const contents = range.extractContents();
+    mark.appendChild(contents);
+    range.insertNode(mark);
+  }
+  return mark;
+}
+
+function highlightSourceText(excerpt) {
+  ensureHighlightStyle();
+  clearSourceHighlights();
+  const sentences = cleanInline(excerpt).split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 3);
+  const probes = [sentences.join(" "), ...sentences].filter(Boolean);
+  const candidates = Array.from(document.querySelectorAll("article p, article li, article blockquote, main p, main li, main blockquote, p, li, blockquote"))
+    .filter((element) => isVisible(element) && probes.some((probe) => normalizeForSearch(element.textContent || "").includes(normalizeForSearch(probe).slice(0, 90))));
+
+  for (const probe of probes) {
+    for (const candidate of candidates) {
+      const mark = highlightWithinElement(candidate, probe);
+      if (!mark) continue;
+      mark.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(clearSourceHighlights, 7000);
+      return true;
+    }
+  }
+  return false;
+}
+
 function sourceNameFromLocation() {
   const siteName = cleanInline(metaContent('meta[property="og:site_name"], meta[name="application-name"]'));
   if (siteName) return siteName;
@@ -215,6 +350,15 @@ function classify(url, text) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "ELLIPSIS_HIGHLIGHT_TEXT") {
+    try {
+      sendResponse({ ok: highlightSourceText(message.text || "") });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : "Unable to highlight source text." });
+    }
+    return true;
+  }
+
   if (message?.type !== "ELLIPSIS_EXTRACT_PAGE") return false;
 
   try {

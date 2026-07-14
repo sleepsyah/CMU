@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev --host 127.0.0.1",
+    "backend:start": "python3 scripts/start_backend.py",
     "build": "astro build",
     "native:install": "node native-host/install.mjs",
     "native:uninstall": "node native-host/install.mjs --uninstall",

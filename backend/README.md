@@ -1,18 +1,16 @@
 # Ellipsis local model helper
 
-This optional FastAPI service combines local transformer outputs with the extension's evidence-linked heuristics. It is a development helper, not a hosted service.
+This optional FastAPI service supplies evidence-linked local transformer signals to Codex when AI deep analysis is enabled. It is a development helper, not a hosted service or a requirement for normal extension use.
 
 ## Run locally
 
 From the repository root:
 
 ```sh
-python3 -m venv backend/.venv
-source backend/.venv/bin/activate
-pip install -r backend/requirements.txt
-pip install -r backend/requirements-ml.txt
-uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+npm run backend:start
 ```
+
+This creates or reuses `backend/.venv`, installs the model requirements, starts the helper on `127.0.0.1:8000`, and warms the supporting models.
 
 Optional dependency parsing:
 
@@ -21,7 +19,7 @@ pip install -r backend/requirements-spacy.txt
 python -m spacy download en_core_web_sm
 ```
 
-Build the extension with the helper URL explicitly set:
+The default helper address is loopback. To use a different loopback port, build with:
 
 ```sh
 PUBLIC_ELLIPSIS_BACKEND_URL=http://127.0.0.1:8000 npm run build

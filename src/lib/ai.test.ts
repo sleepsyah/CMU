@@ -1,22 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { beginCodexLogin, checkCodexConnection, enhanceAnalysisWithCodex, subscribeCodexProgress } from "./ai";
+import { beginCodexLogin, checkAiConnection, checkCodexConnection, enhanceAnalysisWithAi, enhanceAnalysisWithCodex, subscribeCodexProgress } from "./ai";
 import { analyzePage } from "./analysis";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("native Codex connection", () => {
   it("reads connection status through the extension service worker", async () => {
-    const status = { providerStatus: "ready", providerMessage: "Connected.", model: "gpt-5.5", reasoningEffort: "low", runtime: "Codex app-server", checkedAt: "2026-01-01" };
+    const status = { provider: "codex", providerStatus: "ready", providerMessage: "Connected.", model: "gpt-5.5", reasoningEffort: "low", runtime: "Codex app-server", checkedAt: "2026-01-01" };
     const sendMessage = vi.fn().mockResolvedValue({ ok: true, result: status });
     vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage } });
     await expect(checkCodexConnection()).resolves.toEqual(status);
-    expect(sendMessage).toHaveBeenCalledWith({ type: "ellipsis.codex.request", action: "status", payload: undefined });
+    expect(sendMessage).toHaveBeenCalledWith({ type: "ellipsis.ai.request", action: "status", payload: { provider: "codex" } });
   });
 
   it("returns the browser sign-in URL from the native host", async () => {
     const login = { status: { providerStatus: "needs_auth" }, authUrl: "https://chatgpt.com/auth" };
     vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage: vi.fn().mockResolvedValue({ ok: true, result: login }) } });
     await expect(beginCodexLogin()).resolves.toEqual(login);
+  });
+
+  it("requests Claude Code status through the same native connector", async () => {
+    const status = { provider: "claude", providerStatus: "needs_auth", providerMessage: "Sign in required.", model: "claude-sonnet-4-6", reasoningEffort: "low", runtime: "Claude Code CLI", checkedAt: "2026-01-01" };
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, result: status });
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage } });
+    await expect(checkAiConnection("claude")).resolves.toEqual(status);
+    expect(sendMessage).toHaveBeenCalledWith({ type: "ellipsis.ai.request", action: "status", payload: { provider: "claude" } });
   });
 
   it("explains when the native connector is unavailable outside Chrome", async () => {
@@ -31,7 +39,7 @@ describe("native Codex connection", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeCodexProgress(listener);
     const event = { runId: "run-1", id: "reasoning-1", kind: "reasoning", status: "completed", title: "Reasoning summary", at: "2026-01-01" };
-    registered?.({ type: "ellipsis.codex.progress", event });
+    registered?.({ type: "ellipsis.ai.progress", event });
     expect(listener).toHaveBeenCalledWith(event);
     unsubscribe();
     expect(removeListener).toHaveBeenCalledWith(registered);
@@ -89,5 +97,22 @@ describe("native Codex connection", () => {
     expect(result.biasProfile).toEqual(payload.overall_bias);
     expect(result.contentType === "article" && result.genre).toBe("event");
     expect(result.contentType === "article" && result.quotedPeopleOrGroups[0].text).toBe("NASA");
+
+    const noResearchPayload = {
+      ...payload,
+      fact_checks: [],
+      _trace: { ...payload._trace, web_search_queries: [] }
+    };
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage: vi.fn().mockResolvedValue({ ok: true, result: noResearchPayload }) } });
+    const noResearchResult = await enhanceAnalysisWithCodex(analyzePage(page), page, "trace-2");
+    expect(noResearchResult.aiAnalysis?.factChecks).toEqual([]);
+    expect(noResearchResult.aiAnalysis?.webSearchCount).toBe(0);
+
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage: vi.fn().mockResolvedValue({ ok: true, result: payload }) } });
+    const claudeResult = await enhanceAnalysisWithAi(analyzePage(page), page, "claude", "trace-3");
+    expect(claudeResult.aiAnalysis?.provider).toBe("claude");
+    expect(claudeResult.aiAnalysis?.model).toBe("claude-sonnet-4-6");
+    expect(claudeResult.backendBias?.source).toBe("ai-enhanced");
+
   });
 });

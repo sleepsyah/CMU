@@ -57,7 +57,8 @@ function migrateBackendBias(value: BackendBiasAnalysis | undefined): BackendBias
     scores: {
       political_bias: migrateMetric(value.scores.political_bias),
       gender_bias: migrateMetric(value.scores.gender_bias),
-      ethnicity_bias: migrateMetric(value.scores.ethnicity_bias)
+      ethnicity_bias: migrateMetric(value.scores.ethnicity_bias),
+      class_bias: migrateMetric(value.scores.class_bias)
     },
     linguistic_evidence: {
       spin_words_detected: value.linguistic_evidence?.spin_words_detected || [],
@@ -220,6 +221,7 @@ export async function getAiSettings(): Promise<AiSettings> {
   }
   return {
     enabled: value?.enabled === true,
+    provider: value?.provider === "claude" ? "claude" : "codex",
     connectionVerifiedAt: typeof value?.connectionVerifiedAt === "string" ? value.connectionVerifiedAt : null
   };
 }
@@ -227,6 +229,7 @@ export async function getAiSettings(): Promise<AiSettings> {
 export async function saveAiSettings(settings: AiSettings): Promise<AiSettings> {
   const value = {
     enabled: settings.enabled === true,
+    provider: settings.provider === "claude" ? "claude" as const : "codex" as const,
     connectionVerifiedAt: settings.connectionVerifiedAt || null
   };
   await writeValue(AI_SETTINGS_KEY, value);

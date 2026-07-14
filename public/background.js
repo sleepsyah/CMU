@@ -2,7 +2,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 });
 
-const CODEX_HOST = "com.ellipsis.codex";
+const AI_HOST = "com.ellipsis.codex";
 const pendingNativeRequests = new Map();
 let nativePort = null;
 
@@ -16,11 +16,11 @@ function rejectPendingNativeRequests(message) {
 
 function connectNativeHost() {
   if (nativePort) return nativePort;
-  const port = chrome.runtime.connectNative(CODEX_HOST);
+  const port = chrome.runtime.connectNative(AI_HOST);
   nativePort = port;
   port.onMessage.addListener((message) => {
     if (message?.type === "progress" && message.event) {
-      chrome.runtime.sendMessage({ type: "ellipsis.codex.progress", event: message.event }).catch(() => {});
+      chrome.runtime.sendMessage({ type: "ellipsis.ai.progress", event: message.event }).catch(() => {});
       return;
     }
     const pending = pendingNativeRequests.get(message?.id);
@@ -35,9 +35,9 @@ function connectNativeHost() {
     nativePort = null;
     const lowerMessage = message.toLowerCase();
     rejectPendingNativeRequests(lowerMessage.includes("host not found")
-      ? "Ellipsis AI Connector is not registered for this extension. Open the connector app once, reload Ellipsis, then press Connect Codex."
+      ? "Ellipsis AI Connector is not registered for this extension. Open the connector app once, reload Ellipsis, then reconnect your AI provider."
       : lowerMessage.includes("native host has exited")
-        ? "Ellipsis AI Connector started but exited before Codex responded. Reopen the connector app once to repair its registration, then try again."
+        ? "Ellipsis AI Connector started but exited before the AI provider responded. Reopen the connector app once to repair its registration, then try again."
         : message);
   });
   return port;
@@ -68,7 +68,7 @@ function requestNative(action, payload) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "ellipsis.codex.request") {
+  if (message?.type === "ellipsis.ai.request" || message?.type === "ellipsis.codex.request") {
     requestNative(message.action, message.payload)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : "Ellipsis AI Connector failed." }));

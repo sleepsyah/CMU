@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { migrateSavedAnalysis } from "./storage";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getAiSettings, migrateSavedAnalysis } from "./storage";
 import type { SavedAnalysis } from "../types";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("saved-analysis migration", () => {
   it("keeps legacy string findings readable after the evidence model upgrade", () => {
@@ -40,5 +42,14 @@ describe("saved-analysis migration", () => {
     expect(migrated.analysis.loadedLanguageExamples[0].phrase).toBe("crisis");
     expect(migrated.analysis.genre).toBe("general");
     expect(migrated.analysis.framingProfile.dominantFrames).toEqual([]);
+  });
+});
+
+describe("AI settings migration", () => {
+  it("preserves a saved Claude Code provider selection", async () => {
+    const get = vi.fn().mockResolvedValue({ "ellipsis.aiSettings": { enabled: true, provider: "claude", connectionVerifiedAt: "2026-01-01" } });
+    vi.stubGlobal("chrome", { storage: { local: { get, set: vi.fn() } } });
+
+    await expect(getAiSettings()).resolves.toMatchObject({ enabled: true, provider: "claude" });
   });
 });

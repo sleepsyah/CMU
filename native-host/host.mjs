@@ -1,16 +1,27 @@
 import { pathToFileURL } from "node:url";
 import { CodexAppServer } from "./app-server.mjs";
 import { analyzeWithCodex } from "./analysis.mjs";
+import { ClaudeCodeRuntime } from "./claude.mjs";
 import { createNativeMessageDecoder, encodeNativeMessage } from "./native-protocol.mjs";
 
 const IDLE_EXIT_MS = 5 * 60_000;
 const appServer = new CodexAppServer();
+const claudeRuntime = new ClaudeCodeRuntime();
 let idleTimer = null;
+
+export function providerFromPayload(payload = {}) {
+  return payload?.provider === "claude" ? "claude" : "codex";
+}
+
+function closeRuntimes() {
+  appServer.close();
+  claudeRuntime.close();
+}
 
 function resetIdleTimer() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    appServer.close();
+    closeRuntimes();
     process.exit(0);
   }, IDLE_EXIT_MS);
   idleTimer.unref?.();
@@ -18,21 +29,27 @@ function resetIdleTimer() {
 
 export async function handleNativeAction(action, payload = {}, onProgress) {
   resetIdleTimer();
-  if (action === "status") return appServer.status();
-  if (action === "login") return appServer.beginLogin();
+  const provider = providerFromPayload(payload);
+  if (action === "status") return provider === "claude" ? claudeRuntime.status() : appServer.status();
+  if (action === "login") return provider === "claude" ? claudeRuntime.beginLogin() : appServer.beginLogin();
   if (action === "analyze") {
     clearTimeout(idleTimer);
     idleTimer = null;
     try {
+      if (provider === "claude") {
+        const status = await claudeRuntime.status();
+        if (status.providerStatus !== "ready") throw new Error("Connect Claude Code before using AI deep analysis.");
+        return claudeRuntime.analyze(payload, onProgress);
+      }
       const status = await appServer.status();
       if (status.providerStatus !== "ready") throw new Error("Connect Codex before using AI deep analysis.");
-      return await analyzeWithCodex(payload, onProgress);
+      return analyzeWithCodex(payload, onProgress);
     } finally {
       resetIdleTimer();
     }
   }
   if (action === "shutdown") {
-    appServer.close();
+    closeRuntimes();
     return { disconnected: true };
   }
   throw new Error("Unsupported Ellipsis native action.");
@@ -65,7 +82,7 @@ export function runNativeMessagingHost(input = process.stdin, output = process.s
     }
   });
   input.on("end", () => {
-    appServer.close();
+    closeRuntimes();
     process.exit(0);
   });
   resetIdleTimer();
@@ -75,9 +92,11 @@ async function main() {
   const requestIndex = process.argv.indexOf("--request");
   if (requestIndex >= 0) {
     const action = process.argv[requestIndex + 1] || "status";
-    const result = await handleNativeAction(action);
+    const providerIndex = process.argv.indexOf("--provider");
+    const provider = providerIndex >= 0 ? process.argv[providerIndex + 1] : undefined;
+    const result = await handleNativeAction(action, provider ? { provider } : {});
     process.stdout.write(`${JSON.stringify(result)}\n`);
-    appServer.close();
+    closeRuntimes();
     return;
   }
   runNativeMessagingHost();

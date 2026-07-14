@@ -34,7 +34,8 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
   const rows = [
     { label: "Political", dimension: "political" as const, metric: assessment.scores.political_bias },
     { label: "Gender", dimension: "gender" as const, metric: assessment.scores.gender_bias },
-    { label: "Ethnicity", dimension: "ethnicity" as const, metric: assessment.scores.ethnicity_bias }
+    { label: "Ethnicity", dimension: "ethnicity" as const, metric: assessment.scores.ethnicity_bias },
+    { label: "Class", dimension: "class" as const, metric: assessment.scores.class_bias }
   ];
   const reduceMotion = useReducedMotion();
 
@@ -47,7 +48,7 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
           return (
             <div className="signal-chart-row is-empty" key={label}>
               <div className="signal-chart-label"><span>{label}</span></div>
-              <span className="signal-no-evidence">No direct evidence found</span>
+              <span className="signal-no-evidence">Not enough evidence</span>
             </div>
           );
         }
@@ -78,7 +79,6 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
                   </li>
                 ))}
               </ul>
-              <p className="signal-method">Score weighs {evidence} by cue strength · {Math.round(metric.confidence * 100)}% evidence confidence</p>
             </div>
           </details>
         );
@@ -89,16 +89,14 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
 
 export function BiasProfileBand({ profile }: { profile: BiasProfile }) {
   const score = Math.max(0, Math.min(100, Math.round(profile.score)));
-  const filled = Math.round(score / 10);
   return (
     <div className={`confidence-band is-${tone(score)}`}>
       <div className="confidence-copy">
-        <span>Overall bias profile</span>
+        <span>Overall bias</span>
         <strong><CountUp to={score} />/100</strong>
       </div>
-      <div className="confidence-segments" role="progressbar" aria-label="Overall article bias" aria-valuemin={0} aria-valuemax={100} aria-valuenow={score}>
-        {Array.from({ length: 10 }, (_, index) => <span className={index < filled ? "is-filled" : ""} key={index} />)}
-      </div>
+      <div className="confidence-track" role="progressbar" aria-label="Overall source framing" aria-valuemin={0} aria-valuemax={100} aria-valuenow={score}><span style={{ width: `${score}%` }} /></div>
+      <div className="confidence-scale" aria-hidden="true"><span>Neutral</span><span>Strongly framed</span></div>
       <p>{profile.summary}</p>
     </div>
   );
@@ -110,7 +108,7 @@ export function FramingBars({ frames }: { frames: FrameSignal[] }) {
     <div className="frame-bars">
       {frames.map((frame) => (
         <div className="frame-row" key={frame.id}>
-          <div><strong>{frame.label}</strong><span>{frame.source === "local-codex" ? "AI + source evidence" : "Local source evidence"}</span></div>
+          <div><strong>{frame.label}</strong><span>{frame.source === "heuristic" ? "Local source evidence" : "AI + source evidence"}</span></div>
           <div className="frame-bar" aria-hidden="true"><span style={{ width: `${frame.strength}%` }} /></div>
           <span><CountUp to={frame.strength} /></span>
         </div>

@@ -29,4 +29,11 @@ The linked PRD and Spec Google Doc tabs are the source of truth for product beha
 - Do not store unrelated browsing history.
 - Separate source text evidence from any outside context.
 - Mark uncertainty clearly and avoid unsupported claims.
-- The current MVP uses local heuristic analysis. Future LLM or Supabase work should preserve the same structured analysis shape and guardrails.
+- Local analysis must remain fully usable when optional AI analysis is disabled or unavailable.
+
+## AI Connectors
+
+- Read `CLAUDE_CODE_IMPLEMENTATION.md` before changing Claude Code support.
+- Keep Codex and Claude Code behind the existing Chrome Native Messaging connector. Do not add a hosted proxy or require a user-run server.
+- Source analysis may use focused web research, but must not use Computer Use, Chrome control, shell, file tools, plugins, skills, project instructions, or user MCP servers.
+- Run provider analysis from a new system temporary directory. Do not run connector analysis from this repository or another project.

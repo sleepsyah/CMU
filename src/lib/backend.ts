@@ -1,5 +1,5 @@
 import { analyzePage, cleanReadableSourceText, confidenceLabel } from "./analysis";
-import { enhanceAnalysisWithCodex } from "./ai";
+import { aiProviderLabel, enhanceAnalysisWithAi } from "./ai";
 import type {
   AiSettings,
   Analysis,
@@ -13,8 +13,9 @@ import type {
   ExtractedPage
 } from "../types";
 
-const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim() || "";
-const BACKEND_TIMEOUT_MS = 5_000;
+const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim() || "http://127.0.0.1:8000";
+const BACKEND_HEALTH_TIMEOUT_MS = 750;
+const BACKEND_TIMEOUT_MS = 15_000;
 
 interface RawBiasMetric {
   score: number;
@@ -26,6 +27,7 @@ interface BackendPayload {
     political_bias: RawBiasMetric;
     gender_bias: RawBiasMetric;
     ethnicity_bias: RawBiasMetric;
+    class_bias?: RawBiasMetric;
   };
   linguistic_evidence: {
     spin_words_detected: string[];
@@ -102,6 +104,8 @@ const genderGroups = ["woman", "women", "girl", "girls", "female", "mother", "mo
 const genderStereotypes = ["bossy", "emotional", "hysterical", "shrill", "weak", "motherly", "abrasive", "pretty", "unqualified"];
 const ethnicityGroups = ["black", "white", "asian", "latino", "latina", "hispanic", "arab", "muslim", "jewish", "immigrant", "immigrants", "refugee", "refugees", "native american", "indigenous"];
 const hostileTerms = ["criminal", "criminals", "gang", "gangs", "violent", "terrorist", "terrorists", "lazy", "threat", "threats", "illegal", "invasion", "unqualified"];
+const classGroups = ["working class", "working-class", "low-income", "poor", "people in poverty", "wealthy", "rich", "affluent", "elite", "elites", "welfare recipients", "tenants", "landlords", "workers", "unemployed people", "homeless people"];
+const classStereotypes = ["lazy", "irresponsible", "undeserving", "entitled", "greedy", "parasitic", "criminal", "uneducated", "inferior"];
 
 const persuasionPatterns: Array<{
   label: string;
@@ -149,7 +153,7 @@ const persuasionPatterns: Array<{
 
 interface AnalysisOptions {
   aiEnabled?: boolean;
-  aiSettings?: Pick<AiSettings, "enabled">;
+  aiSettings?: Pick<AiSettings, "enabled" | "provider">;
   traceId?: string;
   onProgress?: (event: AnalysisTraceEvent) => void;
 }
@@ -168,30 +172,40 @@ export async function analyzePageWithBackend(page: ExtractedPage, options: Analy
   const readableText = cleanReadableSourceText(page.text);
   trace(options, { id: "gather-source", kind: "local", status: "completed", title: "Gather source text", detail: `${readableText.length.toLocaleString()} characters ready`, durationMs: Date.now() - sourceStartedAt });
   const localAnalysis = analyzePage(page);
+  const localAssessment = localBiasAssessment(readableText);
+  let fallbackAssessment = localAssessment;
   const aiEnabled = options.aiSettings?.enabled ?? options.aiEnabled ?? false;
   let aiFailureReason: string | undefined;
   if (aiEnabled) {
+    const provider = options.aiSettings?.provider || "codex";
+    const providerName = aiProviderLabel(provider);
+    const localBackendUrl = isLoopbackBackendUrl(configuredBackendUrl) ? configuredBackendUrl : "";
+    let supportingAssessment = localAssessment;
+    trace(options, { id: "local-model-support", kind: "local", status: "running", title: "Local model support", detail: "Checking for the optional local model helper" });
+    if (localBackendUrl && await backendIsReady(localBackendUrl)) {
+      try {
+        const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
+        supportingAssessment = mergeWithLocalBackend(localAssessment, backendPayload, readableText);
+        fallbackAssessment = supportingAssessment;
+        trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: `Evidence-linked model signals are ready for ${providerName}` });
+      } catch {
+        trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: `Local helper did not complete; ${providerName} will continue without it` });
+      }
+    } else {
+      trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: `Optional helper is not running; ${providerName} will continue without it` });
+    }
+    const supportedAnalysis = attachBiasAssessment(localAnalysis, supportingAssessment);
     try {
-      const completed = await enhanceAnalysisWithCodex(localAnalysis, page, options.traceId);
-      trace(options, { id: "ai-analysis", kind: "runtime", status: "completed", title: "AI analysis", detail: `${completed.aiAnalysis?.factChecks?.length || 0} researched checks, ${completed.aiAnalysis?.addedSignalCount || 0} bias cues, ${completed.aiAnalysis?.addedFrameCount || 0} frames` });
+      const completed = await enhanceAnalysisWithAi(supportedAnalysis, page, provider, options.traceId, supportingAssessment);
+      trace(options, { id: "ai-analysis", kind: "runtime", status: "completed", title: `${providerName} analysis`, detail: `${completed.aiAnalysis?.factChecks?.length || 0} researched checks, ${completed.aiAnalysis?.addedSignalCount || 0} bias cues, ${completed.aiAnalysis?.addedFrameCount || 0} frames` });
       return completed;
     } catch (error) {
       aiFailureReason = error instanceof Error ? error.message : "AI deep analysis did not complete.";
-      trace(options, { id: "ai-analysis", kind: "runtime", status: "failed", title: "AI analysis", detail: aiFailureReason });
+      trace(options, { id: "ai-analysis", kind: "runtime", status: "failed", title: `${providerName} analysis`, detail: aiFailureReason });
     }
   }
 
-  const localAssessment = localBiasAssessment(readableText);
-  const localBackendUrl = isLoopbackBackendUrl(configuredBackendUrl) ? configuredBackendUrl : "";
-  let analysis = attachBiasAssessment(localAnalysis, localAssessment);
-  if (localBackendUrl) {
-    try {
-      const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
-      analysis = attachBiasAssessment(localAnalysis, mergeWithLocalBackend(localAssessment, backendPayload));
-    } catch {
-      analysis = attachBiasAssessment(localAnalysis, localAssessment);
-    }
-  }
+  const analysis = attachBiasAssessment(localAnalysis, fallbackAssessment);
   return aiFailureReason ? { ...analysis, aiFailureReason } as Analysis : analysis;
 }
 
@@ -207,7 +221,7 @@ export function isLoopbackBackendUrl(value: string) {
 
 async function fetchBackendBias(backendUrl: string, rawText: string): Promise<BackendPayload> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+  const timeout = globalThis.setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
   try {
     const response = await fetch(`${backendUrl.replace(/\/$/, "")}/analyze`, {
       method: "POST",
@@ -220,15 +234,31 @@ async function fetchBackendBias(backendUrl: string, rawText: string): Promise<Ba
     if (!isBackendPayload(payload)) throw new Error("Local helper returned an invalid response");
     return payload;
   } finally {
-    window.clearTimeout(timeout);
+    globalThis.clearTimeout(timeout);
+  }
+}
+
+async function backendIsReady(backendUrl: string) {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), BACKEND_HEALTH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${backendUrl.replace(/\/$/, "")}/health`, { signal: controller.signal });
+    if (!response.ok) return false;
+    const payload = await response.json() as { status?: string; ready?: boolean };
+    return payload.status === "ok" && payload.ready === true;
+  } catch {
+    return false;
+  } finally {
+    globalThis.clearTimeout(timeout);
   }
 }
 
 function isBackendPayload(value: BackendPayload) {
-  const metrics = value?.scores && Object.values(value.scores);
+  const metrics = value?.scores && [value.scores.political_bias, value.scores.gender_bias, value.scores.ethnicity_bias];
   return Boolean(
     metrics?.length === 3 &&
-    metrics.every((metric) => Number.isFinite(metric.score) && Number.isFinite(metric.confidence)) &&
+    metrics.every((metric) => metric && Number.isFinite(metric.score) && Number.isFinite(metric.confidence)) &&
+    (!value.scores.class_bias || (Number.isFinite(value.scores.class_bias.score) && Number.isFinite(value.scores.class_bias.confidence))) &&
     Array.isArray(value?.linguistic_evidence?.spin_words_detected) &&
     Array.isArray(value?.contextual_analysis?.missing_perspectives)
   );
@@ -249,10 +279,11 @@ export function biasProfileFromAssessment(assessment: BackendBiasAnalysis): Bias
   const dimensions = [
     { label: "political framing", metric: assessment.scores.political_bias },
     { label: "gender framing", metric: assessment.scores.gender_bias },
-    { label: "ethnicity framing", metric: assessment.scores.ethnicity_bias }
+    { label: "ethnicity framing", metric: assessment.scores.ethnicity_bias },
+    { label: "class framing", metric: assessment.scores.class_bias }
   ];
   const assessed = dimensions.filter((item) => item.metric.status === "assessed" && item.metric.score !== null);
-  if (!assessed.length) return { score: 0, level: "minimal", summary: "No direct political, gender, or ethnicity framing cues were found in the extracted article." };
+  if (!assessed.length) return { score: 0, level: "minimal", summary: "No direct political, gender, ethnicity, or class framing cues were found in the extracted source." };
   const weight = assessed.reduce((sum, item) => sum + Math.max(1, item.metric.evidenceCount), 0);
   const score = Math.round(assessed.reduce((sum, item) => sum + ((item.metric.score || 0) * Math.max(1, item.metric.evidenceCount)), 0) / weight);
   const level: BiasProfile["level"] = score < 20 ? "minimal" : score < 40 ? "low" : score < 70 ? "moderate" : "high";
@@ -296,13 +327,32 @@ function buildBiasEvidence(analysis: Analysis, assessment: BackendBiasAnalysis):
   return items;
 }
 
-function mergeWithLocalBackend(local: BackendBiasAnalysis, backend: BackendPayload): BackendBiasAnalysis {
-  const mergeMetric = (metric: BiasMetric, modelMetric: RawBiasMetric): BiasMetric => {
-    if (metric.status === "insufficient-evidence" || metric.score === null) return metric;
+function mergeWithLocalBackend(local: BackendBiasAnalysis, backend: BackendPayload, rawText: string): BackendBiasAnalysis {
+  const sentences = splitSentences(rawText);
+  const modelSignals = backend.linguistic_evidence.spin_words_detected.slice(0, 6).flatMap((phrase) => {
+    const matcher = new RegExp(`\\b${escapeRegExp(phrase).replace(/\\ /g, "\\s+")}\\b`, "i");
+    const context = sentences.find((sentence) => matcher.test(sentence));
+    return context ? [makeSignal(
+      "political",
+      "loaded_language",
+      phrase,
+      context,
+      "A local transformer identified this exact wording as a possible lexical framing cue.",
+      2,
+      "Check whether the source supports this wording with concrete evidence."
+    )] : [];
+  });
+  const signals = [...local.linguistic_evidence.signals, ...modelSignals]
+    .filter((signal, index, values) => values.findIndex((item) => `${item.dimension}:${item.phrase.toLowerCase()}:${item.context.toLowerCase()}` === `${signal.dimension}:${signal.phrase.toLowerCase()}:${signal.context.toLowerCase()}`) === index);
+  const mergeMetric = (metric: BiasMetric, modelMetric: RawBiasMetric, dimension: BiasDimension): BiasMetric => {
+    const dimensionSignals = signals.filter((signal) => signal.dimension === dimension);
+    const evidenceMetric = metric.status === "assessed" && metric.score !== null ? metric : scoreSignals(dimensionSignals);
+    if (evidenceMetric.status === "insufficient-evidence" || evidenceMetric.score === null) return metric;
     return {
-      ...metric,
-      score: Math.min(92, Math.round((metric.score * 0.45) + (clamp(modelMetric.score, 0, 100) * 0.55))),
-      confidence: Math.min(0.78, Math.max(metric.confidence, clamp(modelMetric.confidence, 0, 1) * 0.8))
+      ...evidenceMetric,
+      score: Math.min(92, Math.round((evidenceMetric.score * 0.45) + (clamp(modelMetric.score, 0, 100) * 0.55))),
+      confidence: Math.min(0.78, Math.max(evidenceMetric.confidence, clamp(modelMetric.confidence, 0, 1) * 0.8)),
+      evidenceCount: dimensionSignals.length
     };
   };
 
@@ -310,15 +360,17 @@ function mergeWithLocalBackend(local: BackendBiasAnalysis, backend: BackendPaylo
     ...local,
     source: "hybrid-backend",
     scores: {
-      political_bias: mergeMetric(local.scores.political_bias, backend.scores.political_bias),
-      gender_bias: mergeMetric(local.scores.gender_bias, backend.scores.gender_bias),
-      ethnicity_bias: mergeMetric(local.scores.ethnicity_bias, backend.scores.ethnicity_bias)
+      political_bias: mergeMetric(local.scores.political_bias, backend.scores.political_bias, "political"),
+      gender_bias: mergeMetric(local.scores.gender_bias, backend.scores.gender_bias, "gender"),
+      ethnicity_bias: mergeMetric(local.scores.ethnicity_bias, backend.scores.ethnicity_bias, "ethnicity"),
+      class_bias: backend.scores.class_bias ? mergeMetric(local.scores.class_bias, backend.scores.class_bias, "class") : local.scores.class_bias
     },
     linguistic_evidence: {
       ...local.linguistic_evidence,
       spin_words_detected: Array.from(new Set([...local.linguistic_evidence.spin_words_detected, ...backend.linguistic_evidence.spin_words_detected])),
       target_dependent_asymmetries: backend.linguistic_evidence.target_dependent_asymmetries,
-      counterfactual_sentiment_delta: backend.linguistic_evidence.counterfactual_sentiment_delta
+      counterfactual_sentiment_delta: backend.linguistic_evidence.counterfactual_sentiment_delta,
+      signals
     },
     contextual_analysis: {
       missing_perspectives: backend.contextual_analysis.missing_perspectives.slice(0, 3),
@@ -359,6 +411,7 @@ export function localBiasAssessment(text: string): BackendBiasAnalysis {
 
   const genderPattern = associationPattern(genderGroups, genderStereotypes, 45);
   const ethnicityPattern = associationPattern(ethnicityGroups, hostileTerms, 55);
+  const classPattern = associationPattern(classGroups, classStereotypes, 55);
   for (const sentence of sentences) {
     if (hasNegatedAssociation(sentence)) continue;
     const genderMatch = sentence.match(genderPattern);
@@ -387,17 +440,32 @@ export function localBiasAssessment(text: string): BackendBiasAnalysis {
         "State the specific person, evidence, and relevant behavior without generalizing to a group."
       ));
     }
+    const classMatch = sentence.match(classPattern);
+    if (classMatch && signals.filter((signal) => signal.dimension === "class").length < 3) {
+      const phrase = matchedCue(classMatch[0], classStereotypes) || "class association";
+      signals.push(makeSignal(
+        "class",
+        "stereotype_association",
+        phrase,
+        sentence,
+        "A socioeconomic group appears directly associated with a class-based stereotype or generalized judgment.",
+        2,
+        "Describe the specific conduct, material condition, or evidence without generalizing to an income or social group."
+      ));
+    }
   }
 
   const politicalSignals = signals.filter((signal) => signal.dimension === "political");
   const genderSignals = signals.filter((signal) => signal.dimension === "gender");
   const ethnicitySignals = signals.filter((signal) => signal.dimension === "ethnicity");
+  const classSignals = signals.filter((signal) => signal.dimension === "class");
   return {
     source: "local-heuristic",
     scores: {
       political_bias: scoreSignals(politicalSignals),
       gender_bias: scoreSignals(genderSignals),
-      ethnicity_bias: scoreSignals(ethnicitySignals)
+      ethnicity_bias: scoreSignals(ethnicitySignals),
+      class_bias: scoreSignals(classSignals)
     },
     linguistic_evidence: {
       spin_words_detected: politicalSignals.map((signal) => signal.phrase),
@@ -407,7 +475,7 @@ export function localBiasAssessment(text: string): BackendBiasAnalysis {
     },
     contextual_analysis: {
       missing_perspectives: [],
-      stereotypical_associations: [...genderSignals, ...ethnicitySignals].map((signal) => signal.explanation).slice(0, 3)
+      stereotypical_associations: [...genderSignals, ...ethnicitySignals, ...classSignals].map((signal) => signal.explanation).slice(0, 3)
     }
   };
 }
@@ -469,12 +537,14 @@ function splitSentences(text: string) {
 function metricForDimension(assessment: BackendBiasAnalysis, dimension: BiasDimension) {
   if (dimension === "gender") return assessment.scores.gender_bias;
   if (dimension === "ethnicity") return assessment.scores.ethnicity_bias;
+  if (dimension === "class") return assessment.scores.class_bias;
   return assessment.scores.political_bias;
 }
 
 function dimensionLabel(dimension: BiasDimension) {
   if (dimension === "gender") return "Gender framing";
   if (dimension === "ethnicity") return "Ethnicity framing";
+  if (dimension === "class") return "Class framing";
   return "Political wording";
 }
 

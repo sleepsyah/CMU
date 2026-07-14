@@ -3,6 +3,8 @@ import { createNativeMessageDecoder, encodeNativeMessage } from "./native-protoc
 import { EXTENSION_ID, hostManifest, sourceLauncherContents } from "./install.mjs";
 import { configuredMcpServerNames, RESTRICTED_FEATURES, restrictedCodexConfig } from "./restrictions.mjs";
 import { codexItemIsAllowed, codexTraceItemId, compactReasoningSummary } from "./analysis.mjs";
+import { buildClaudeAnalysisArgs, claudeToolIsAllowed, consumeClaudeMessage, createClaudeTraceState, parseClaudeAuthStatus, structuredClaudeOutput } from "./claude.mjs";
+import { providerFromPayload } from "./host.mjs";
 
 describe("Chrome Native Messaging protocol", () => {
   it("decodes complete and fragmented messages", () => {
@@ -62,5 +64,45 @@ describe("Chrome Native Messaging protocol", () => {
     const result = compactReasoningSummary("I need to search for the official record and compare it with a second source before deciding how the claim affects the analysis. Then I should format the JSON output and verify every field.");
     expect(result.length).toBeLessThanOrEqual(150);
     expect(result.split(/[.!?]/).filter(Boolean)).toHaveLength(1);
+  });
+
+  it("dispatches provider-aware native requests", () => {
+    expect(providerFromPayload({ provider: "claude" })).toBe("claude");
+    expect(providerFromPayload({ provider: "codex" })).toBe("codex");
+    expect(providerFromPayload({ provider: "unknown" })).toBe("codex");
+  });
+
+  it("keeps Claude Code in a web-only one-shot runtime", () => {
+    const args = buildClaudeAnalysisArgs();
+    expect(args).toContain("--safe-mode");
+    expect(args).toContain("--no-chrome");
+    expect(args).toContain("--no-session-persistence");
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("WebSearch,WebFetch");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toContain("ComputerUse");
+    expect(claudeToolIsAllowed("WebSearch")).toBe(true);
+    expect(claudeToolIsAllowed("WebFetch")).toBe(true);
+    expect(claudeToolIsAllowed("Read")).toBe(false);
+    expect(claudeToolIsAllowed("Bash")).toBe(false);
+  });
+
+  it("parses Claude authentication and structured stream output", () => {
+    expect(parseClaudeAuthStatus('{"loggedIn":true,"authMethod":"claude.ai"}').loggedIn).toBe(true);
+    expect(parseClaudeAuthStatus('{"loggedIn":false,"authMethod":"none"}').loggedIn).toBe(false);
+    const state = createClaudeTraceState();
+    consumeClaudeMessage(state, {
+      type: "result",
+      subtype: "success",
+      structured_output: { summary: "Structured analysis" }
+    });
+    expect(structuredClaudeOutput(state.result)).toEqual({ summary: "Structured analysis" });
+  });
+
+  it("blocks non-web Claude tool calls in the stream", () => {
+    const state = createClaudeTraceState();
+    expect(() => consumeClaudeMessage(state, {
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tool-1", name: "Read", input: {} } }
+    })).toThrow(/blocked Read tool/i);
   });
 });

@@ -100,6 +100,7 @@ export class CodexAppServer {
     const ready = Boolean(response?.account) || response?.requiresOpenaiAuth === false;
     const email = typeof response?.account?.email === "string" ? response.account.email : "";
     return {
+      provider: "codex",
       providerStatus: ready ? "ready" : "needs_auth",
       providerMessage: ready
         ? email ? `Connected to Codex as ${email}.` : "Connected to the authenticated local Codex runtime."

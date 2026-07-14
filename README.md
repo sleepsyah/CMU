@@ -45,13 +45,15 @@ Saved analyses stay on your device. Ellipsis stores up to 50 saved items.
 
 ## Optional AI deep analysis
 
-Ellipsis works without AI. When AI mode is enabled, GPT-5.5 produces the complete summary, framing, bias, source-participation, confidence, and researched claim analysis. Local heuristics are used only if AI is off or fails:
+Ellipsis works without AI. When AI mode is enabled, Codex or Claude Code produces the complete summary, framing, bias, source-participation, confidence, and relevant researched claim analysis. Local heuristics remain available if AI is off or fails:
 
 1. Move the packaged **Ellipsis AI Connector** to Applications, then open it once to register it with Chrome.
-2. In Ellipsis, turn on **AI deep analysis** and select **Connect Codex**.
-3. Complete ChatGPT sign-in in the tab Ellipsis opens, if requested.
+2. In Ellipsis, turn on **AI deep analysis** and choose Codex or Claude Code.
+3. Press the provider connection button and complete sign-in if requested.
 
-Chrome starts the native connector automatically when Ellipsis needs it. There is no background server command, port, API key, or hosted proxy to configure. The connector uses Codex app-server for status and browser-based authentication, then runs GPT-5.5 with low reasoning through the official Codex SDK in a read-only empty workspace. Built-in web search is the only available tool; Computer Use, browser control, plugins, MCP servers, shell commands, and file access are disabled. AI mode researches material claims, streams one-sentence reasoning summaries and searches, and returns cited claim checks alongside the agent output. Direct bias findings are displayed only when their quoted evidence matches the supplied source text. If the connector is unavailable, Ellipsis completes the local heuristic analysis normally.
+Chrome starts the native connector automatically when Ellipsis needs it. There is no extension API key or hosted proxy to configure. Codex uses app-server plus the official Codex SDK with GPT-5.5 low reasoning. Claude uses the locally installed Claude Code CLI with Sonnet 4.6 low effort. Both run in an empty temporary workspace with only focused web research available. Computer Use, Chrome control, plugins, MCP servers, shell commands, and file access are disabled. If the selected provider is unavailable, unauthenticated, out of usage, or unsupported by the account, Ellipsis completes the local analysis normally.
+
+Developers can optionally run `npm run backend:start` to provide evidence-linked local transformer signals to the selected provider. The helper runs only on loopback, is consulted only while AI deep analysis is enabled, and never replaces source-text validation.
 
 For source development, `npm run native:install` registers the source-tree connector for the stable unpacked extension id and records the absolute Node runtime path so Chrome does not depend on the user's shell environment. Run it again after moving the repository or replacing Node. `npm run native:package:mac` builds the self-contained macOS connector app. These are development and packaging commands, not end-user connection steps.
 
@@ -69,7 +71,7 @@ Always read the cited passage in context before drawing a conclusion.
 
 Ellipsis does not require an account. Analysis happens locally by default, and full article text is not added to saved history. Saved results contain only short excerpts needed to explain the analysis.
 
-When AI deep analysis is enabled, extracted source text is sent over Chrome Native Messaging to the local connector and processed through the user's authenticated Codex session. Codex usually runs one to three focused web searches to check material claims, and cited research remains separate from source-text evidence. The extension has no remote AI endpoint and does not expose a localhost listener.
+When AI deep analysis is enabled, extracted source text is sent over Chrome Native Messaging to the local connector and processed through the user's authenticated Codex or Claude Code session. The selected provider searches only when a material claim needs external verification, and cited research remains separate from source-text evidence. The extension has no remote AI endpoint. The optional Python model helper, when enabled by a developer, listens only on loopback.
 
 ## If a page cannot be analyzed
 

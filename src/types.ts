@@ -3,7 +3,8 @@ export type ConfidenceLabel = "High" | "Medium" | "Low";
 export type FeedbackType = "Helpful" | "Confusing" | "Incorrect" | "Biased";
 export type EvidenceKind = "source_text" | "outside_context" | "analysis_note";
 export type ArticleGenre = "event" | "opinion" | "data_report" | "explainer" | "investigation" | "general";
-export type BiasDimension = "political" | "gender" | "ethnicity";
+export type BiasDimension = "political" | "gender" | "ethnicity" | "class";
+export type AiProvider = "codex" | "claude";
 export type BiasMetricStatus = "assessed" | "insufficient-evidence";
 export type FrameLabel =
   | "Economic"
@@ -76,7 +77,7 @@ export interface FrameSignal {
   strength: number;
   explanation: string;
   evidenceIds: string[];
-  source: "heuristic" | "local-codex";
+  source: "heuristic" | "local-codex" | "local-ai";
 }
 
 export interface FramingProfile {
@@ -101,10 +102,17 @@ export interface FactCheck {
   }>;
 }
 
+export interface VocabularyTerm {
+  term: string;
+  meaning: string;
+  evidenceIds: string[];
+}
+
 export interface AiAnalysis {
-  source: "local-codex";
-  model: "gpt-5.5";
-  reasoningEffort: "low";
+  source: "local-codex" | "local-ai";
+  provider?: AiProvider;
+  model: string;
+  reasoningEffort: string;
   summaryEvidenceIds: string[];
   confidenceScore: number;
   confidenceReason: string;
@@ -116,6 +124,7 @@ export interface AiAnalysis {
   runtimeMs: number;
   summaryRefined: boolean;
   webSearchCount: number;
+  localModelSupport?: boolean;
   outputSummary?: string;
   factChecks?: FactCheck[];
   researchSourceCount?: number;
@@ -142,23 +151,30 @@ export interface AnalysisTraceEvent {
 
 export interface AiSettings {
   enabled: boolean;
+  provider: AiProvider;
   connectionVerifiedAt: string | null;
 }
 
-export interface CodexConnectionStatus {
+export interface AiConnectionStatus {
+  provider: AiProvider;
   providerStatus: "ready" | "needs_auth" | "unavailable";
   providerMessage: string;
-  model: "gpt-5.5";
-  reasoningEffort: "low";
+  model: string;
+  reasoningEffort: string;
   runtime: string;
+  version?: string | null;
   checkedAt: string;
 }
 
-export interface CodexLoginResult {
-  status: CodexConnectionStatus;
+export interface AiLoginResult {
+  status: AiConnectionStatus;
   authUrl?: string;
   loginId?: string | null;
+  loginStarted?: boolean;
 }
+
+export type CodexConnectionStatus = AiConnectionStatus;
+export type CodexLoginResult = AiLoginResult;
 
 export interface TargetDependentAsymmetry {
   target: string;
@@ -170,6 +186,7 @@ export interface BackendBiasAnalysis {
     political_bias: BiasMetric;
     gender_bias: BiasMetric;
     ethnicity_bias: BiasMetric;
+    class_bias: BiasMetric;
   };
   linguistic_evidence: {
     spin_words_detected: string[];
@@ -181,7 +198,7 @@ export interface BackendBiasAnalysis {
     missing_perspectives: string[];
     stereotypical_associations: string[];
   };
-  source: "hybrid-backend" | "local-heuristic" | "local-fallback" | "codex-enhanced";
+  source: "hybrid-backend" | "local-heuristic" | "local-fallback" | "codex-enhanced" | "ai-enhanced";
 }
 
 export interface BiasProfile {
@@ -204,6 +221,7 @@ export interface BaseAnalysis {
   summaryEvidenceIds: string[];
   createdAt: string;
   evidence: EvidenceItem[];
+  vocabularyTerms?: VocabularyTerm[];
   backendBias?: BackendBiasAnalysis;
   biasProfile?: BiasProfile;
   aiAnalysis?: AiAnalysis;
