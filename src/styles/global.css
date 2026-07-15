@@ -2354,7 +2354,14 @@ blockquote {
 }
 
 .source-voice-evidence {
+  display: grid;
+  gap: 9px;
   margin-top: 4px;
+}
+
+.source-voice-passage + .source-voice-passage {
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
 }
 
 .people-list small,

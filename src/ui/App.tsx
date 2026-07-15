@@ -432,11 +432,14 @@ function SourcesAndVoicesPanel({ analysis, onShowSource }: { analysis: Analysis;
                   <span>{sourceTypeLabel(source)} · {sourceRoleLabel(source)}</span>
                   <p>{source.contributionSummary}</p>
                   {source.reportedVia?.[0] && <small>Reported through {source.reportedVia[0]}</small>}
-                  {source.evidence[0] && (
+                  {source.evidence.length > 0 && (
                     <div className="source-voice-evidence">
-                      <blockquote>{source.evidence[0].evidenceText}</blockquote>
-                      <button className="source-highlight-button" type="button" onClick={() => onShowSource(source.evidence[0].evidenceText)}><LinkSimple size={12} />View in article</button>
-                      {source.evidence.length > 1 && <details className="source-evidence-more"><summary>{source.evidence.length - 1} more attributed passage{source.evidence.length === 2 ? "" : "s"}</summary>{source.evidence.slice(1, 3).map((evidence, index) => <blockquote key={`${evidence.blockId}-${evidence.sentenceIndex}-${index}`}>{evidence.evidenceText}</blockquote>)}</details>}
+                      {source.evidence.map((evidence, index) => (
+                        <div className="source-voice-passage" key={`${evidence.blockId}-${evidence.sentenceIndex}-${index}`}>
+                          <blockquote>{evidence.evidenceText}</blockquote>
+                          <button className="source-highlight-button" type="button" onClick={() => onShowSource(evidence.evidenceText)}><LinkSimple size={12} />View in article</button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
