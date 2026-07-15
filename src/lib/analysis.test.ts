@@ -111,6 +111,41 @@ describe("article analysis", () => {
     expect(analysis.summaryEvidenceIds.every((id) => analysis.evidence.some((item) => item.id === id))).toBe(true);
   });
 
+  it("does not place a quote-led attribution after an indirect-summary lead", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Blanche appears at confirmation hearing",
+        text: [
+          "“I am here today to earn your trust once more,” Blanche said at the top of his confirmation hearing.",
+          "During Blanche’s confirmation hearing Wednesday, several of Epstein’s accusers were seated in the Senate gallery."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).not.toContain("reports that “");
+    expect(analysis.summary).not.toContain("notes that “");
+    expect(analysis.summary).toContain("Blanche said at the top of his confirmation hearing: “I am here today to earn your trust once more.”");
+  });
+
+  it("prefers narrative reporting over quote-led sentences when enough alternatives exist", () => {
+    const quote = "“I am here today to earn your trust once more,” Blanche said at the top of his confirmation hearing.";
+    const analysis = analyzePage(
+      page({
+        title: "Blanche appears at confirmation hearing",
+        text: [
+          quote,
+          "Several accusers were seated in the Senate gallery during Blanche’s confirmation hearing Wednesday.",
+          "The committee will vote next week on whether to advance Blanche’s nomination to the full Senate."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    const summaryEvidence = analysis.summaryEvidenceIds.map((id) => analysis.evidence.find((item) => item.id === id)?.supportingText);
+    expect(summaryEvidence).not.toContain(quote);
+  });
+
   it("keeps source extraction separate from genre classification", () => {
     const analysis = analyzePage(
       page({

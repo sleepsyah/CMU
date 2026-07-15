@@ -248,7 +248,8 @@ function rankedSummarySentences(page: ExtractedPage, sentences: string[], count:
       const positionSignal = index === 0 ? 1.2 : Math.max(0, 0.65 - index * 0.07);
       const detailSignal = /\b(?:according to|announced|approved|directed|found|reported|would|will|could|because|after|before|result|investigation)\b/i.test(sentence) ? 0.45 : 0;
       const lengthPenalty = sentence.length < 55 ? 0.8 : sentence.length > 420 ? 0.5 : 0;
-      return { sentence, index, tokens: uniqueTokens, score: centrality + titleOverlap * 0.7 + positionSignal + detailSignal - lengthPenalty };
+      const quoteLeadPenalty = /^[\s“"]/.test(sentence) ? 3 : 0;
+      return { sentence, index, tokens: uniqueTokens, score: centrality + titleOverlap * 0.7 + positionSignal + detailSignal - lengthPenalty - quoteLeadPenalty };
     })
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
@@ -278,6 +279,23 @@ function conciseSummaryClause(sentence: string) {
 
 function lowerSentenceLead(value: string) {
   return /^[A-Z][a-z]/.test(value) ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+}
+
+function standaloneQuote(value: string) {
+  const trimmed = value.trim();
+  if (!/[”"]$/.test(trimmed)) return trimmed;
+  if (/[,;:][”"]$/.test(trimmed)) return trimmed.replace(/[,;:]([”"])$/, ".$1");
+  if (!/[.!?][”"]$/.test(trimmed)) return trimmed.replace(/([”"])$/, ".$1");
+  return trimmed;
+}
+
+function quoteLedSummary(sentence: string) {
+  const normalized = normalizeWhitespace(sentence);
+  const attributed = normalized.match(/^([“"][\s\S]+?[”"])[,;:]?\s+(.+?)\s+(said|says|stated|added|wrote|testified|argued|explained|noted|announced)(\s+[^.!?]*)?[.!?]?$/i);
+  if (!attributed) return null;
+
+  const [, quote, speaker, verb, context = ""] = attributed;
+  return `${speaker} ${verb.toLowerCase()}${context}: ${standaloneQuote(quote)}`;
 }
 
 function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
@@ -312,8 +330,8 @@ function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sen
   const [first, ...rest] = clauses;
   const lead = page.contentType === "bill" ? "The source explains that" : "The article reports that";
   const summary = [
-    `${lead} ${lowerSentenceLead(first).replace(/[.!?]+$/, "")}.`,
-    ...rest.map((clause) => `It also notes that ${lowerSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
+    quoteLedSummary(first) || `${lead} ${lowerSentenceLead(first).replace(/[.!?]+$/, "")}.`,
+    ...rest.map((clause) => quoteLedSummary(clause) || `It also notes that ${lowerSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
   ].join(" ");
   return { summary, evidenceIds };
 }
