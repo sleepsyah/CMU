@@ -226,7 +226,7 @@ function analysisSectionsFor(analysis: Analysis): Array<{ id: AnalysisSection; l
   return [
     { id: "overview", label: "Overview" },
     { id: "language", label: "Language" },
-    { id: "voices", label: analysis.contentType === "article" ? "Sources & Voices" : "People & impacts" },
+    { id: "voices", label: analysis.contentType === "article" ? "Perspectives" : "People & impacts" },
     { id: "evidence", label: "Evidence" }
   ];
 }
