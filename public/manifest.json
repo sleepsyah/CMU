@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ellipsis",
-  "description": "Understand framing, bias, loaded language, missing perspectives, and plain-language meaning in articles and Congress.gov bills.",
+  "description": "Understand framing, bias, loaded language, attributed sources, and plain-language meaning in articles and Congress.gov bills.",
   "version": "0.2.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApG4Ww9CAsa6MH0UeMV5uwzDyMjkU3QYiuBOLn76uMMC6Hwcs4Sdv2BkcPu181SayNeV+lmcb1OQ9bQCoAJX7QyTdeyQ4wL3ixk9DpO3cG2pc2F7wtH+abM7MoGVbLKCSvuf6psZpnQS7DdJEPj9G7Q7cFA5K64Se4HN59Mv9SdgId0g7BHCO3p4Pf8YKqPl4TVEF9ExSxOTDxBXEPGcv1PZdnjgMxoNpSYU/NdO5uKW2WV9IL6q32JnLiu9Ep6EFz9tnjEBjzlp9O74ilBRTAqOKm4LCG2836m2P41+rnVPzDSVuMtM14IgI0+xFFLo8hO9Ao/6mC8xGeEgHwfojAQIDAQAB",
   "icons": {

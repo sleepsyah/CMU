@@ -2309,6 +2309,94 @@ blockquote {
   font-size: 10.5px;
 }
 
+.source-voice-list > li {
+  padding: 9px 11px;
+}
+
+.people-list .source-voice-disclosure {
+  margin: 0;
+}
+
+.source-voice-disclosure > summary {
+  display: flex;
+  align-items: center;
+  color: #2a2920;
+  list-style: none;
+}
+
+.source-voice-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.source-voice-disclosure > summary::before {
+  width: 12px;
+  margin-right: 5px;
+  color: var(--muted);
+  content: "▸";
+  font-size: 10px;
+}
+
+.source-voice-disclosure[open] > summary::before {
+  content: "▾";
+}
+
+.source-voice-details {
+  display: grid;
+  gap: 5px;
+  padding: 7px 0 2px 17px;
+}
+
+.source-voice-list p {
+  margin: 3px 0 0;
+  color: #2a2920;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.source-voice-evidence {
+  margin-top: 4px;
+}
+
+.people-list small,
+.source-coverage {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.source-list-summary {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.people-list details {
+  margin-top: 4px;
+}
+
+.people-list summary {
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.people-list blockquote {
+  margin: 7px 0;
+  padding-left: 9px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.source-coverage {
+  margin: 9px 0 0;
+}
+
 .finding-list {
   display: grid;
   gap: 7px;

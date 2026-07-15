@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { beginCodexLogin, checkAiConnection, checkCodexConnection, enhanceAnalysisWithAi, enhanceAnalysisWithCodex, NO_PERSPECTIVES_MESSAGE, subscribeCodexProgress, validateSourceParticipation } from "./ai";
+import { beginCodexLogin, checkAiConnection, checkCodexConnection, enhanceAnalysisWithAi, enhanceAnalysisWithCodex, subscribeCodexProgress } from "./ai";
 import { analyzePage } from "./analysis";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -72,10 +72,6 @@ describe("native Codex connection", () => {
       signals: [],
       review_questions: [],
       findings: [{ section: "main_issue", text: "Artemis II is a crewed lunar test mission.", evidence_quote: "NASA said Artemis II carries four astronauts around the Moon and returns them to Earth." }],
-      source_participation: {
-        named_sources: [{ name: "NASA", affiliation: "NASA", source_type: "institution", evidence_quote: "NASA said Artemis II carries four astronauts around the Moon and returns them to Earth." }],
-        attributed_perspectives: [{ name: "NASA", type: "institution", position: "Presents the mission as preparation for later lunar missions.", supported_by: ["NASA"], evidence_quote: "NASA said Artemis II carries four astronauts around the Moon and returns them to Earth." }]
-      },
       important_terms: [],
       fact_checks: [{
         claim: "Artemis II carries four astronauts around the Moon.",
@@ -96,7 +92,7 @@ describe("native Codex connection", () => {
     expect(result.backendBias?.source).toBe("codex-enhanced");
     expect(result.biasProfile).toEqual(payload.overall_bias);
     expect(result.contentType === "article" && result.genre).toBe("event");
-    expect(result.contentType === "article" && result.quotedPeopleOrGroups[0].text).toBe("NASA");
+    expect(result.contentType === "article" && result.sourcesAndVoices[0].displayName).toBe("NASA");
 
     const noResearchPayload = {
       ...payload,
@@ -114,70 +110,5 @@ describe("native Codex connection", () => {
     expect(claudeResult.aiAnalysis?.model).toBe("claude-sonnet-4-6");
     expect(claudeResult.backendBias?.source).toBe("ai-enhanced");
 
-  });
-});
-
-describe("AI perspective validation", () => {
-  it("rejects weekdays, dates, a city, and an article topic", () => {
-    const text = "On Monday, Pittsburgh discussed immigration. On Tuesday, officials scheduled another meeting for July 14, 2026.";
-    const result = validateSourceParticipation(text, {
-      named_sources: [
-        { name: "Monday", affiliation: "", source_type: "other_stakeholder", evidence_quote: text },
-        { name: "Pittsburgh", affiliation: "", source_type: "institution", evidence_quote: text }
-      ],
-      attributed_perspectives: [
-        { name: "Monday", type: "other_stakeholder", position: "Opened the discussion.", supported_by: ["Monday"], evidence_quote: text },
-        { name: "Tuesday", type: "other_stakeholder", position: "Continued the discussion.", supported_by: ["Monday"], evidence_quote: text },
-        { name: "July 14, 2026", type: "other_stakeholder", position: "Was selected for a meeting.", supported_by: ["Monday"], evidence_quote: text },
-        { name: "Pittsburgh", type: "institution", position: "Discussed the issue.", supported_by: ["Pittsburgh"], evidence_quote: text },
-        { name: "immigration", type: "other_stakeholder", position: "Was discussed.", supported_by: ["Pittsburgh"], evidence_quote: text }
-      ]
-    });
-    expect(result.namedSources).toEqual([]);
-    expect(result.perspectives).toEqual([]);
-  });
-
-  it("accepts a government source and the broader government perspective it supports", () => {
-    const evidence = "Jane Smith of the City Council said the proposal would reduce costs.";
-    const result = validateSourceParticipation(evidence, {
-      named_sources: [{ name: "Jane Smith", affiliation: "City Council", source_type: "government", evidence_quote: evidence }],
-      attributed_perspectives: [{ name: "City government", type: "government", position: "Supports the proposal as a way to reduce costs.", supported_by: ["Jane Smith"], evidence_quote: evidence }]
-    });
-    expect(result.namedSources.map((item) => item.name)).toEqual(["Jane Smith"]);
-    expect(result.perspectives).toMatchObject([{ name: "City government", type: "government", supported_by: ["Jane Smith"] }]);
-  });
-
-  it("accepts quoted local residents as an affected-group perspective", () => {
-    const evidence = "Local residents said the closure would make it harder to reach medical care.";
-    const result = validateSourceParticipation(evidence, {
-      named_sources: [{ name: "Local residents", affiliation: "", source_type: "affected_group", evidence_quote: evidence }],
-      attributed_perspectives: [{ name: "Local residents", type: "affected_group", position: "Oppose the closure because it would limit access to care.", supported_by: ["Local residents"], evidence_quote: evidence }]
-    });
-    expect(result.perspectives).toHaveLength(1);
-    expect(result.perspectives[0].type).toBe("affected_group");
-  });
-
-  it("rejects fabricated evidence and invalid perspective types", () => {
-    const evidence = "Jane Smith of the City Council said the proposal would reduce costs.";
-    const result = validateSourceParticipation(evidence, {
-      named_sources: [{ name: "Jane Smith", affiliation: "City Council", source_type: "government", evidence_quote: evidence }],
-      attributed_perspectives: [
-        { name: "City government", type: "government", position: "Supports the proposal.", supported_by: ["Jane Smith"], evidence_quote: "Jane Smith said the proposal would save millions." },
-        { name: "City government", type: "location", position: "Supports the proposal.", supported_by: ["Jane Smith"], evidence_quote: evidence }
-      ]
-    });
-    expect(result.perspectives).toEqual([]);
-  });
-
-  it("removes duplicate perspectives and safely represents an empty result", () => {
-    const evidence = "Local residents said the closure would make it harder to reach medical care.";
-    const perspective = { name: "Local residents", type: "affected_group", position: "Oppose the closure.", supported_by: ["Local residents"], evidence_quote: evidence };
-    const deduped = validateSourceParticipation(evidence, {
-      named_sources: [{ name: "Local residents", affiliation: "", source_type: "affected_group", evidence_quote: evidence }],
-      attributed_perspectives: [perspective, { ...perspective }]
-    });
-    expect(deduped.perspectives).toHaveLength(1);
-    expect(validateSourceParticipation("The report was released Monday.", { named_sources: [], attributed_perspectives: [] }).perspectives).toEqual([]);
-    expect(NO_PERSPECTIVES_MESSAGE).toBe("No clearly represented stakeholder perspectives were identified.");
   });
 });

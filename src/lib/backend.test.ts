@@ -107,7 +107,7 @@ describe("local helper privacy boundary", () => {
         target_dependent_asymmetries: [],
         counterfactual_sentiment_delta: 0
       },
-      contextual_analysis: { missing_perspectives: [], stereotypical_associations: [] }
+      contextual_analysis: { stereotypical_associations: [] }
     };
     const fetchMock = vi.fn(async (input: string | URL) => ({
       ok: true,

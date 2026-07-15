@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyzePage, classifyPastedText, cleanDisplayTitle, cleanReadableSourceText, keyFindingsFor } from "./analysis";
+import { longLiveBlogFixture } from "./fixtures/sources-and-voices-excerpts";
 import type { AnalysisFinding, ExtractedPage } from "../types";
 
 function page(overrides: Partial<ExtractedPage>): ExtractedPage {
@@ -21,7 +22,7 @@ function findingIds(findings: AnalysisFinding[]) {
 }
 
 describe("article analysis", () => {
-  it("recognizes attributed names without treating a negated group mention as an included perspective", () => {
+  it("recognizes explicit attribution without inventing voices from nearby mentions", () => {
     const analysis = analyzePage(
       page({
         text:
@@ -31,13 +32,12 @@ describe("article analysis", () => {
 
     expect(analysis.contentType).toBe("article");
     if (analysis.contentType !== "article") return;
-    expect(analysis.quotedPeopleOrGroups.map((item) => item.text)).toContain("Jordan Lee");
-    expect(analysis.includedPerspectives.map((item) => item.text).join(" ")).not.toContain("Jordan Lee");
-    expect(analysis.includedPerspectives.map((item) => item.text).join(" ")).not.toMatch(/business perspective/i);
+    expect(analysis.sourcesAndVoices.map((item) => item.displayName)).toContain("Jordan Lee");
+    expect(analysis.sourcesAndVoices.map((item) => item.displayName).join(" ")).not.toMatch(/business owners/i);
     expect(analysis.confidenceScore).toBeLessThan(75);
   });
 
-  it("does not treat CBS-style weekday attribution modifiers as sources or perspectives", () => {
+  it("does not treat CBS-style weekday attribution modifiers as sources", () => {
     const analysis = analyzePage(
       page({
         text: [
@@ -49,11 +49,23 @@ describe("article analysis", () => {
     );
     if (analysis.contentType !== "article") throw new Error("Expected article analysis");
 
-    const sources = analysis.quotedPeopleOrGroups.map((item) => item.text);
-    const perspectives = analysis.includedPerspectives.map((item) => item.text);
+    const sources = analysis.sourcesAndVoices.map((item) => item.displayName);
     expect(sources).toContain("Jane Smith");
     expect(sources).not.toEqual(expect.arrayContaining(["Monday", "Tuesday"]));
-    expect(perspectives.join(" ")).not.toMatch(/\b(?:Monday|Tuesday)\b/i);
+  });
+
+  it("passes complete-document canonical sources and coverage metadata to the sidebar analysis", () => {
+    const text = longLiveBlogFixture();
+    const analysis = analyzePage(page({ text }));
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.sourcesAndVoices.map((source) => source.displayName)).toEqual(expect.arrayContaining([
+      "U.S. Central Command (CENTCOM)",
+      "Maritime Safety Board"
+    ]));
+    expect(analysis.sourceCoverage.processedCharacterCount).toBe(text.length);
+    expect(analysis.sourceCoverage.truncated).toBe(false);
+    expect(analysis.sourceEvents.at(-1)?.blockId).toMatch(/^block-/);
   });
 
   it("links every displayed article finding to a known evidence item", () => {
@@ -70,10 +82,7 @@ describe("article analysis", () => {
       ...analysis.summaryEvidenceIds,
       ...findingIds([analysis.mainIssue]),
       ...findingIds(analysis.framingNotes),
-      ...findingIds(analysis.loadedLanguageExamples),
-      ...findingIds(analysis.quotedPeopleOrGroups),
-      ...findingIds(analysis.includedPerspectives),
-      ...findingIds(analysis.missingPerspectives)
+      ...findingIds(analysis.loadedLanguageExamples)
     ];
     expect(ids.length).toBeGreaterThan(0);
     expect(ids.every((id) => knownIds.has(id))).toBe(true);
@@ -102,7 +111,7 @@ describe("article analysis", () => {
     expect(analysis.summaryEvidenceIds.every((id) => analysis.evidence.some((item) => item.id === id))).toBe(true);
   });
 
-  it("uses genre-aware review questions instead of default supporter and opponent prompts", () => {
+  it("keeps source extraction separate from genre classification", () => {
     const analysis = analyzePage(
       page({
         title: "Annual transit data report",
@@ -113,8 +122,8 @@ describe("article analysis", () => {
     if (analysis.contentType !== "article") throw new Error("Expected article analysis");
 
     expect(analysis.genre).toBe("data_report");
-    expect(analysis.includedPerspectives.map((item) => item.text).join(" ")).toMatch(/researchers/i);
-    expect(analysis.missingPerspectives.map((item) => item.text).join(" ")).not.toMatch(/supportive|opposing/i);
+    expect(analysis.sourcesAndVoices.map((item) => item.displayName).join(" ")).toMatch(/researchers/i);
+    expect("missingPerspectives" in analysis).toBe(false);
   });
 
   it("limits the primary reading flow to three findings", () => {

@@ -20,9 +20,10 @@ import {
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyPastedText, confidenceLabel } from "../lib/analysis";
-import { beginAiLogin, checkAiConnection, NO_PERSPECTIVES_MESSAGE, subscribeAiProgress } from "../lib/ai";
+import { beginAiLogin, checkAiConnection, subscribeAiProgress } from "../lib/ai";
 import { analyzePageWithBackend, biasProfileFromAssessment } from "../lib/backend";
 import { createManualPage, extractActivePage, highlightActivePagePassage } from "../lib/chrome";
+import { sourceRoleLabel } from "../lib/sources";
 import {
   clearFeedbackLogs,
   clearSavedAnalyses,
@@ -42,6 +43,7 @@ import type {
   AiLoginResult,
   AiProvider,
   AiSettings,
+  ArticleSource,
   ArticleGenre,
   BillAnalysis,
   ContentType,
@@ -53,7 +55,7 @@ import type {
 import { BiasProfileBand, BiasSignalChart, FramingBars } from "./components/InsightCharts";
 
 type AppView = "analysis" | "saved";
-type AnalysisSection = "overview" | "language" | "perspectives" | "sources";
+type AnalysisSection = "overview" | "language" | "voices" | "evidence";
 
 const feedbackTypes: FeedbackType[] = ["Helpful", "Confusing", "Incorrect", "Biased"];
 
@@ -220,12 +222,14 @@ function AiDetailsDisclosure({ analysis, trace }: { analysis: Analysis; trace: A
   );
 }
 
-const analysisSections: Array<{ id: AnalysisSection; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "language", label: "Language" },
-  { id: "perspectives", label: "Perspectives" },
-  { id: "sources", label: "Sources" }
-];
+function analysisSectionsFor(analysis: Analysis): Array<{ id: AnalysisSection; label: string }> {
+  return [
+    { id: "overview", label: "Overview" },
+    { id: "language", label: "Language" },
+    { id: "voices", label: analysis.contentType === "article" ? "Sources & Voices" : "People & impacts" },
+    { id: "evidence", label: "Evidence" }
+  ];
+}
 
 function sourceContext(analysis: Analysis) {
   if (analysis.contentType === "bill") {
@@ -395,26 +399,53 @@ function LanguagePanel({ analysis, onShowSource }: { analysis: Analysis; onShowS
   );
 }
 
-function PerspectivesPanel({ analysis }: { analysis: Analysis }) {
+function sourceTypeLabel(source: ArticleSource) {
+  if (source.entityType === "government") return "Government source";
+  if (source.entityType === "media") return "News or reporting organization";
+  if (source.entityType === "anonymous_source") return "Unnamed attributed source";
+  if (source.entityType === "document") return "Report, study, or official document";
+  if (source.entityType === "person") return "Named person";
+  return "Organization";
+}
+
+function SourcesAndVoicesPanel({ analysis, onShowSource }: { analysis: Analysis; onShowSource: (text: string) => void }) {
   if (analysis.contentType === "bill") {
     return (
-      <div className="analysis-panel perspectives-panel">
+      <div className="analysis-panel sources-voices-panel">
         <section className="prototype-section"><span className="prototype-label">Groups that may be affected</span><FindingList items={analysis.affectedGroups} /></section>
         <section className="prototype-section"><span className="prototype-label">Sourced positions</span><FindingList items={[...analysis.sourcedSupporters, ...analysis.sourcedOpponents]} tone="included" /></section>
         <section className="prototype-section missing-block"><span className="prototype-label">Unclear impacts</span><FindingList items={analysis.unclearImpacts} tone="question" /></section>
       </div>
     );
   }
+  const sources = analysis.sourcesAndVoices || [];
   return (
-    <div className="analysis-panel perspectives-panel">
+    <div className="analysis-panel sources-voices-panel">
       <section className="prototype-section">
-        <span className="prototype-label">Quoted people and groups</span>
-        {analysis.quotedPeopleOrGroups.length > 0 ? (
-          <ul className="people-list">{analysis.quotedPeopleOrGroups.map((person, index) => <li key={`${person.text}-${index}`}><strong>{person.text}</strong><span>Named in the source</span></li>)}</ul>
-        ) : <p className="panel-empty">No named source was reliably identified.</p>}
+        <span className="prototype-label">Explicitly attributed sources</span>
+        {sources.length > 0 ? (
+          <ul className="people-list source-voice-list">{sources.map((source) => (
+            <li key={source.canonicalId}>
+              <details className="source-voice-disclosure">
+                <summary><strong>{source.displayName}</strong></summary>
+                <div className="source-voice-details">
+                  <span>{sourceTypeLabel(source)} · {sourceRoleLabel(source)}</span>
+                  <p>{source.contributionSummary}</p>
+                  {source.reportedVia?.[0] && <small>Reported through {source.reportedVia[0]}</small>}
+                  {source.evidence[0] && (
+                    <div className="source-voice-evidence">
+                      <blockquote>{source.evidence[0].evidenceText}</blockquote>
+                      <button className="source-highlight-button" type="button" onClick={() => onShowSource(source.evidence[0].evidenceText)}><LinkSimple size={12} />View in article</button>
+                      {source.evidence.length > 1 && <details className="source-evidence-more"><summary>{source.evidence.length - 1} more attributed passage{source.evidence.length === 2 ? "" : "s"}</summary>{source.evidence.slice(1, 3).map((evidence, index) => <blockquote key={`${evidence.blockId}-${evidence.sentenceIndex}-${index}`}>{evidence.evidenceText}</blockquote>)}</details>}
+                    </div>
+                  )}
+                </div>
+              </details>
+            </li>
+          ))}</ul>
+        ) : <p className="panel-empty">No clearly attributed sources were identified in this article.</p>}
+        {analysis.sourceSummary && <p className="source-list-summary">{analysis.sourceSummary}</p>}
       </section>
-      <section className="prototype-section"><span className="prototype-label">Included</span><FindingList items={analysis.includedPerspectives} tone="included" emptyMessage={NO_PERSPECTIVES_MESSAGE} /></section>
-      <section className="prototype-section missing-block"><span className="prototype-label">Possibly missing</span><FindingList items={analysis.missingPerspectives} tone="question" /></section>
     </div>
   );
 }
@@ -493,6 +524,7 @@ function AnalysisView({
   trace: AnalysisTraceEvent[];
 }) {
   const sourceIsLink = /^https?:\/\//.test(analysis.url);
+  const analysisSections = analysisSectionsFor(analysis);
   const [section, setSection] = useState<AnalysisSection>("overview");
   useEffect(() => setSection("overview"), [analysis.id]);
 
@@ -540,10 +572,10 @@ function AnalysisView({
       <section id={`analysis-panel-${section}`} role="tabpanel" aria-labelledby={`analysis-tab-${section}`}>
         {section === "overview" && <OverviewPanel analysis={analysis} />}
         {section === "language" && <LanguagePanel analysis={analysis} onShowSource={onShowSource} />}
-        {section === "perspectives" && <PerspectivesPanel analysis={analysis} />}
-        {section === "sources" && <SourcesPanel analysis={analysis} trace={trace} onShowSource={onShowSource} />}
+        {section === "voices" && <SourcesAndVoicesPanel analysis={analysis} onShowSource={onShowSource} />}
+        {section === "evidence" && <SourcesPanel analysis={analysis} trace={trace} onShowSource={onShowSource} />}
       </section>
-      <footer className="analysis-disclaimer">Ellipsis shows how this {analysis.contentType} is framed and what may be missing. AI-assisted results may be incomplete.</footer>
+      <footer className="analysis-disclaimer">Ellipsis shows how this {analysis.contentType} is framed and which claims have supporting evidence. AI-assisted results may be incomplete.</footer>
     </div>
   );
 }
@@ -584,9 +616,7 @@ function SourceBreakdown({ analysis }: { analysis: Analysis }) {
       <FindingGroup title="Main issue" items={[analysis.mainIssue]} />
       <FindingGroup title="Framing prompts" items={analysis.framingNotes} />
       <FindingGroup title="Potentially loaded wording" items={analysis.loadedLanguageExamples} />
-      <FindingGroup title="Included perspectives" items={analysis.includedPerspectives} />
-      <FindingGroup title="Questions to check" items={analysis.missingPerspectives} />
-      <FindingGroup title="Attributed sources" items={analysis.quotedPeopleOrGroups} />
+      {analysis.sourcesAndVoices.length > 0 && <div className="detail-group"><h3>Sources and voices</h3><ul>{analysis.sourcesAndVoices.map((source) => <li key={source.canonicalId}><strong>{source.displayName}:</strong> {source.contributionSummary}</li>)}</ul></div>}
     </>
   );
 }

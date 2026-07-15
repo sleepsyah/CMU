@@ -43,6 +43,75 @@ describe("saved-analysis migration", () => {
     expect(migrated.analysis.genre).toBe("general");
     expect(migrated.analysis.framingProfile.dominantFrames).toEqual([]);
   });
+
+  it("does not revive obsolete perspective entries as Sources and Voices", () => {
+    const evidence = "Indian foreign ministry said it had summoned the deputy chief of mission of the Iranian embassy to register ‘a strong protest’ against the attacks.";
+    const legacy = {
+      id: "legacy-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      analysis: {
+        id: "legacy-source",
+        url: "manual://paste",
+        pageTitle: "Legacy article",
+        sourceName: "Manual paste",
+        contentType: "article",
+        summary: "Summary",
+        confidenceScore: 60,
+        confidenceReason: "Legacy",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        evidence: [],
+        mainIssue: "Legacy issue",
+        perspectiveSources: [{
+          canonicalId: "bad-source",
+          displayName: evidence,
+          aliases: [evidence],
+          entityType: "government",
+          sourceRoles: ["quoted"],
+          evidence: [{ text: evidence, attributionType: "quoted" }],
+          mentionCount: 1
+        }]
+      }
+    } as unknown as SavedAnalysis;
+
+    const migrated = migrateSavedAnalysis(legacy);
+    if (!migrated || migrated.analysis.contentType !== "article") throw new Error("Expected article migration");
+    expect(migrated.analysis.sourcesAndVoices).toEqual([]);
+  });
+
+  it("preserves evidence-backed Sources and Voices entries", () => {
+    const evidence = "City Council chair Jane Smith said the plan would reduce travel times.";
+    const saved = {
+      id: "current-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      analysis: {
+        id: "current-source",
+        url: "manual://paste",
+        pageTitle: "Current article",
+        sourceName: "Manual paste",
+        contentType: "article",
+        summary: "Summary",
+        confidenceScore: 60,
+        confidenceReason: "Current",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        evidence: [],
+        mainIssue: "Current issue",
+        sourcesAndVoices: [{
+          canonicalId: "source-jane-smith",
+          displayName: "Jane Smith",
+          aliases: ["Jane Smith"],
+          entityType: "person",
+          sourceRoles: ["paraphrased"],
+          contributionSummary: "Stated that the plan would reduce travel times.",
+          evidence: [{ evidenceText: evidence, attributionType: "paraphrased" }],
+          mentionCount: 1
+        }]
+      }
+    } as unknown as SavedAnalysis;
+
+    const migrated = migrateSavedAnalysis(saved);
+    if (!migrated || migrated.analysis.contentType !== "article") throw new Error("Expected article migration");
+    expect(migrated.analysis.sourcesAndVoices[0]).toMatchObject({ displayName: "Jane Smith", contributionSummary: "Stated that the plan would reduce travel times." });
+  });
 });
 
 describe("AI settings migration", () => {

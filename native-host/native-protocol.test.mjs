@@ -66,16 +66,20 @@ describe("Chrome Native Messaging protocol", () => {
     expect(result.split(/[.!?]/).filter(Boolean)).toHaveLength(1);
   });
 
-  it("constrains perspectives to sourced stakeholder viewpoints", () => {
-    const sourceParticipation = OUTPUT_SCHEMA.properties.source_participation.properties;
-    expect(sourceParticipation.attributed_perspectives.items.properties.type.enum).toEqual([
-      "government", "political_opposition", "expert", "affected_group",
-      "advocacy_group", "business", "institution", "witness", "other_stakeholder"
-    ]);
-    expect(sourceParticipation.attributed_perspectives.items.required).toEqual(["name", "type", "position", "supported_by", "evidence_quote"]);
+  it("leaves Sources and Voices to the explicit local attribution pipeline", () => {
+    expect(OUTPUT_SCHEMA.properties.source_participation).toBeUndefined();
     const { prompt } = buildAnalysisPrompt({ raw_text: "A sufficiently long article passage says that Jane Smith of the City Council supports the proposal because it would reduce costs for local residents and small businesses." });
-    expect(prompt).toMatch(/source is a quoted or attributed actor; a perspective is the broader stakeholder interest/i);
-    expect(prompt).toMatch(/Monday, Tuesday, July 14 2026, Pittsburgh, immigration/i);
+    expect(prompt).toMatch(/Sources and Voices are extracted locally from explicit attribution patterns/i);
+    expect(prompt).toMatch(/Do not infer ideological positions, missing perspectives, fairness, balance/i);
+  });
+
+  it("does not silently truncate source text at the former 30,000-character limit", () => {
+    const rawText = "A complete live-blog update with attributed source evidence. ".repeat(700);
+    expect(rawText.length).toBeGreaterThan(30_000);
+    const built = buildAnalysisPrompt({ raw_text: rawText });
+    expect(built.rawText).toHaveLength(rawText.trim().length);
+    expect(built.source.raw_text).toHaveLength(rawText.trim().length);
+    expect(() => buildAnalysisPrompt({ raw_text: "Long source evidence. ".repeat(7_000) })).toThrow(/instead of silently truncating/i);
   });
 
   it("dispatches provider-aware native requests", () => {

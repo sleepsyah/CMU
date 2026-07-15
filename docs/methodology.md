@@ -33,6 +33,18 @@ When enabled, Codex produces the complete analysis rather than adding findings t
 
 These weights are an interpretable prototype, not a statistically calibrated probability.
 
+## Sources and Voices
+
+Ellipsis extracts a small set of explicit sources from the complete readable document before optional AI enhancement. Live blogs are divided into semantic page blocks and bounded sentence chunks, every retained block is processed, and the result records processed characters, total characters, block counts, skipped page-furniture blocks, and truncation status.
+
+The source pipeline records attribution events rather than treating capitalized entities as speakers. Each event keeps the attributed actor, claim, optional quoted fragment, attribution type, exact evidence sentence, sentence index, block identifier, any reporting intermediary, and whether the actor was only mentioned. Source identity fields and evidence fields remain separate: a full sentence is never a card display name or an alias. Cards are limited to people, organizations, government bodies, documents, and clearly identified unnamed groups with direct attribution evidence. Mentioned-only entities are not displayed.
+
+Before display, source names are repaired or rejected when they include reporting verbs, finite claims, sentence or quotation syntax, excessive evidence overlap, or unsafe length. Quotation marks alone do not make an attribution direct: the quoted words must be the primary content immediately attributed to the source. Quoted fragments inside a paraphrase remain evidence metadata and the card stays paraphrased. Development builds log the extracted source span, evidence span, canonicalization result, attribution class, and rejection or repair reason.
+
+Aliases are resolved after all blocks are processed. Resolution normalizes punctuation, possessives, honorifics, whitespace, and case; merges an unambiguous surname with its fullest article-supported name; and connects supplied acronyms or derivable organization abbreviations. Agencies remain separate from their countries. Nested chains retain the primary claim holder and record outlets such as Reuters or IRIB as reporting channels, not separate voices unless the article independently attributes a claim to them.
+
+Each source card contains a short neutral description of what the article attributes to the source, the exact evidence passage, and a link back to that passage. Sources are ranked by the substance and clarity of their attribution, combined across repeated mentions, and capped at eight. This deterministic parser is deliberately conservative: ambiguous surname matches, pronouns without a unique named antecedent, and unclear grammatical subjects are omitted rather than guessed. It does not assign ideology, sentiment, agreement, balance, or fairness labels. Optional AI output cannot replace these source cards.
+
 ## Optional Codex analysis
 
 1. Send the extracted source, title, source name, and content type through Chrome Native Messaging when the user has enabled AI.
@@ -43,12 +55,9 @@ These weights are an interpretable prototype, not a statistically calibrated pro
 6. Require structured output for summary evidence, an article-level bias profile, internal evidence confidence, Media Frames Corpus labels, span-level cues, review questions, and claim-level research checks.
 7. Reject summary evidence, frame evidence, and bias cues whose quoted text cannot be matched to the supplied source.
 8. Require each claim check to match an exact passage from the supplied source and include at least one valid web citation.
-9. Identify concrete attributed sources before deriving broader stakeholder perspectives. A source is a person, organization, institution, or stakeholder group whose statement or interest appears in the article; a perspective is the viewpoint or interest represented by that source.
-10. Restrict perspective types to government, political opposition, expert, affected group, advocacy group, business, institution, witness, or other stakeholder. Before display, reject unsupported evidence, unknown types, duplicates, and non-stakeholder labels corresponding to `DATE`, `TIME`, `PERCENT`, `MONEY`, `QUANTITY`, `ORDINAL`, or `CARDINAL` entities, plus locations, topics, and events. Lightweight JavaScript checks remain active even when the optional Python NLP helper is unavailable.
-11. Show “No clearly represented stakeholder perspectives were identified.” when validation leaves no perspectives. Ellipsis does not invent a perspective to fill an empty result.
-12. Stop the AI run if Codex attempts a blocked tool category.
-13. Keep omission and missing-perspective output phrased as questions.
-14. Run the complete local analysis only when AI is disabled or connector startup, authentication, the SDK run, schema validation, evidence matching, or restriction verification fails.
+9. Keep Sources and Voices in the local explicit-attribution pipeline; do not ask the AI provider to infer sources, positions, missing viewpoints, balance, or fairness.
+10. Stop the AI run if Codex attempts a blocked tool category.
+11. Run the complete local analysis only when AI is disabled or connector startup, authentication, the SDK run, schema validation, evidence matching, or restriction verification fails.
 
 AI confidence measures extraction coverage and evidence support. It is capped and is not a probability that the analysis or source is true.
 

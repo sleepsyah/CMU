@@ -26,7 +26,8 @@ export async function fetchPageFromUrl(value: string): Promise<ExtractedPage> {
       throw new Error("This link is not a readable HTML or text page.");
     }
 
-    const html = (await response.text()).slice(0, MAX_RESPONSE_BYTES);
+    const html = await response.text();
+    if (html.length > MAX_RESPONSE_BYTES) throw new Error("The page is too large to analyze from a link. Open it in a tab instead.");
     return extractPageFromHtml(html, response.url || url);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -72,7 +73,7 @@ export function extractPageFromHtml(html: string, url: string): ExtractedPage {
     blocks.push(text);
   });
 
-  const text = (blocks.length >= 2 ? blocks.join("\n\n") : cleanReadableText(clone.textContent || "")).slice(0, 30_000);
+  const text = blocks.length >= 2 ? blocks.join("\n\n") : cleanReadableText(clone.textContent || "");
   if (text.length < 120) throw new Error("The link did not expose enough readable text. Open the page in a tab or paste the text instead.");
 
   const parsedUrl = new URL(url);
@@ -128,5 +129,7 @@ function countWords(value: string) {
 }
 
 function isNoise(value: string) {
-  return /^(advertisement|subscribe|log in|sign up|create account|listen to this article|share|skip to content|live updates?)$/i.test(value);
+  return /^(advertisement|subscribe|log in|sign up|create account|listen to this article|share|skip to content|live updates?|link copied|read full bio|add .+ on google)$/i.test(value) ||
+    /^(?:[A-Z][\w.'’–-]+(?:\s+[A-Z][\w.'’–-]+){0,4})\s+is\s+(?:an?|the)\s+.{0,120}\b(?:editor|journalist|reporter|correspondent)\b/i.test(value) ||
+    /^(?:[A-Z][\w.'’–-]+(?:\s+[A-Z][\w.'’–-]+){0,4})\s+has\s+(?:worked|covered|reported)\b/i.test(value);
 }

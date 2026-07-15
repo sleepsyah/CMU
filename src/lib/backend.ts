@@ -260,7 +260,7 @@ function isBackendPayload(value: BackendPayload) {
     metrics.every((metric) => metric && Number.isFinite(metric.score) && Number.isFinite(metric.confidence)) &&
     (!value.scores.class_bias || (Number.isFinite(value.scores.class_bias.score) && Number.isFinite(value.scores.class_bias.confidence))) &&
     Array.isArray(value?.linguistic_evidence?.spin_words_detected) &&
-    Array.isArray(value?.contextual_analysis?.missing_perspectives)
+    Array.isArray(value?.contextual_analysis?.stereotypical_associations)
   );
 }
 
@@ -373,7 +373,6 @@ function mergeWithLocalBackend(local: BackendBiasAnalysis, backend: BackendPaylo
       signals
     },
     contextual_analysis: {
-      missing_perspectives: backend.contextual_analysis.missing_perspectives.slice(0, 3),
       stereotypical_associations: Array.from(new Set([
         ...local.contextual_analysis.stereotypical_associations,
         ...backend.contextual_analysis.stereotypical_associations
@@ -474,7 +473,6 @@ export function localBiasAssessment(text: string): BackendBiasAnalysis {
       signals
     },
     contextual_analysis: {
-      missing_perspectives: [],
       stereotypical_associations: [...genderSignals, ...ethnicitySignals, ...classSignals].map((signal) => signal.explanation).slice(0, 3)
     }
   };

@@ -82,9 +82,60 @@ export interface FrameSignal {
 
 export interface FramingProfile {
   dominantFrames: FrameSignal[];
-  namedSourceCount: number;
-  attributedPerspectiveCount: number;
-  reviewQuestions: AnalysisFinding[];
+}
+
+export type SourceEntityType = "person" | "government" | "organization" | "media" | "anonymous_source" | "document";
+export type SourceRole = "quoted" | "paraphrased" | "official_statement" | "anonymous_attribution" | "document_source" | "declined_comment";
+export type AttributionType = SourceRole | "direct_quote" | "denial" | "mentioned_only";
+
+export interface SourceEvidence {
+  evidenceText: string;
+  sourceSpan?: string;
+  quotedText?: string;
+  sentenceIndex?: number;
+  blockId?: string;
+  attributionType: AttributionType;
+}
+
+export interface ArticleSource {
+  canonicalId: string;
+  displayName: string;
+  canonicalName?: string;
+  aliases: string[];
+  entityType: SourceEntityType;
+  affiliation?: string;
+  sourceRoles: SourceRole[];
+  contributionSummary: string;
+  evidence: SourceEvidence[];
+  reportedVia?: string[];
+  mentionCount: number;
+}
+
+export interface AttributionEvent extends SourceEvidence {
+  actor: string;
+  claim: string;
+  sourceRole?: SourceRole;
+  reportingIntermediary?: string;
+  mentionedOnly: boolean;
+}
+
+export interface SourceExtractionDiagnostic {
+  sourceSpan: string;
+  evidenceSpan: string;
+  canonicalizationResult?: string;
+  attributionClassification?: AttributionType;
+  decision: "accepted" | "repaired" | "rejected";
+  reason: string;
+}
+
+export interface SourceCoverage {
+  processedCharacterCount: number;
+  totalCharacterCount: number;
+  blockCount: number;
+  skippedBlockCount: number;
+  skippedCharacterCount: number;
+  skipped: boolean;
+  truncated: boolean;
 }
 
 export type FactCheckStatus = "supported" | "contradicted" | "unresolved" | "context_needed";
@@ -195,7 +246,6 @@ export interface BackendBiasAnalysis {
     signals: BiasSignal[];
   };
   contextual_analysis: {
-    missing_perspectives: string[];
     stereotypical_associations: string[];
   };
   source: "hybrid-backend" | "local-heuristic" | "local-fallback" | "codex-enhanced" | "ai-enhanced";
@@ -234,9 +284,10 @@ export interface ArticleAnalysis extends BaseAnalysis {
   mainIssue: AnalysisFinding;
   framingNotes: AnalysisFinding[];
   loadedLanguageExamples: Array<AnalysisFinding & { phrase: string; context: string }>;
-  quotedPeopleOrGroups: AnalysisFinding[];
-  includedPerspectives: AnalysisFinding[];
-  missingPerspectives: AnalysisFinding[];
+  sourcesAndVoices: ArticleSource[];
+  sourceSummary: string;
+  sourceEvents: AttributionEvent[];
+  sourceCoverage: SourceCoverage;
   framingProfile: FramingProfile;
 }
 
