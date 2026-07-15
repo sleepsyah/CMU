@@ -47,14 +47,10 @@ interface AiPayload {
   }>;
   review_questions: string[];
   findings: Array<{
-    section: "main_issue" | "included_perspective" | "review_question" | "proposed_change" | "affected_group" | "sourced_supporter" | "sourced_opponent" | "unclear_impact";
+    section: "main_issue" | "review_question" | "proposed_change" | "affected_group" | "sourced_supporter" | "sourced_opponent" | "unclear_impact";
     text: string;
     evidence_quote: string;
   }>;
-  source_participation: {
-    named_sources: Array<{ name: string; evidence_quote: string }>;
-    attributed_perspectives: Array<{ text: string; evidence_quote: string }>;
-  };
   important_terms: Array<{
     term: string;
     meaning: string;
@@ -118,7 +114,7 @@ export async function enhanceAnalysisWithAi(
   traceId = "",
   supportingAssessment?: BackendBiasAnalysis
 ): Promise<Analysis> {
-  const readableText = cleanReadableSourceText(page.text).slice(0, 30_000);
+  const readableText = cleanReadableSourceText(page.text);
   const payload = await nativeRequest<AiPayload>("analyze", provider, {
     title: analysis.pageTitle,
     source_name: analysis.sourceName,
@@ -235,26 +231,6 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     .filter((item): item is AnalysisFinding & { section: AiPayload["findings"][number]["section"] } => Boolean(item))
     .slice(0, 8);
 
-  const namedSources = payload.source_participation.named_sources
-    .map((item): AnalysisFinding | null => {
-      const quote = matchedSourceQuote(sourceText, item.evidence_quote);
-      const name = bounded(item.name, 140);
-      if (!quote || !name) return null;
-      const evidenceId = addSourceEvidence(evidence, analysis, `Named source: ${name}.`, quote, "The AI identified this source from the exact attributed passage.");
-      return { text: name, evidenceIds: [evidenceId], confidenceScore: 70, confidenceLabel: "Medium" };
-    })
-    .filter((item): item is AnalysisFinding => Boolean(item));
-
-  const attributedPerspectives = payload.source_participation.attributed_perspectives
-    .map((item): AnalysisFinding | null => {
-      const quote = matchedSourceQuote(sourceText, item.evidence_quote);
-      const text = bounded(item.text, 220);
-      if (!quote || !text) return null;
-      const evidenceId = addSourceEvidence(evidence, analysis, "Attributed perspective identified by AI.", quote, "The AI tied this perspective to an exact source passage.");
-      return { text, evidenceIds: [evidenceId], confidenceScore: 68, confidenceLabel: "Medium" };
-    })
-    .filter((item): item is AnalysisFinding => Boolean(item));
-
   const importantTerms = payload.important_terms
     .map((item): (AnalysisFinding & { term: string; meaning: string }) | null => {
       const quote = matchedSourceQuote(sourceText, item.evidence_quote);
@@ -310,7 +286,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
   const evidenceBonus = Math.min(8, summaryEvidenceIds.length + frames.length + aiSignals.length + aiFindings.length);
   const confidenceScore = clamp(aiConfidence + evidenceBonus, 30, 88);
   const confidenceReason = confidenceScore < 50
-    ? `The extracted sample is short, so document-level framing and omission conclusions remain limited. ${providerName} evidence was matched to the supplied source, but this is not factuality confidence.`
+    ? `The extracted sample is short, so document-level framing conclusions remain limited. ${providerName} evidence was matched to the supplied source, but this is not factuality confidence.`
     : `${bounded(payload.confidence_reason, 260)} This confidence reflects source coverage and evidence matching, not factual accuracy.`;
   const aiAnalysis: AiAnalysis = {
     source: provider === "claude" ? "local-ai" : "local-codex",
@@ -356,11 +332,6 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
   if (analysis.contentType === "article") {
     const mainIssue = aiFindings.find((item) => item.section === "main_issue");
     if (!mainIssue) throw new Error(`${providerName} did not return a source-linked main issue for the complete article analysis.`);
-    const includedPerspectives = dedupeFindings([
-      ...attributedPerspectives,
-      ...aiFindings.filter((item) => item.section === "included_perspective")
-    ]).slice(0, 8);
-    const findingQuestions = aiFindings.filter((item) => item.section === "review_question");
     const framingNotes = frames.map((frame): AnalysisFinding => ({
       text: frame.explanation,
       evidenceIds: frame.evidenceIds,
@@ -384,14 +355,8 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
       mainIssue,
       framingNotes,
       loadedLanguageExamples,
-      quotedPeopleOrGroups: dedupeFindings(namedSources).slice(0, 8),
-      includedPerspectives,
-      missingPerspectives: dedupeFindings([...findingQuestions, ...reviewQuestions]).slice(0, 4),
       framingProfile: {
-        dominantFrames: frames,
-        namedSourceCount: namedSources.length,
-        attributedPerspectiveCount: includedPerspectives.length,
-        reviewQuestions: dedupeFindings([...findingQuestions, ...reviewQuestions]).slice(0, 4)
+        dominantFrames: frames
       }
     };
   }
@@ -431,7 +396,6 @@ function aiBiasAssessment(signals: BiasSignal[], provider: AiProvider): BackendB
       signals
     },
     contextual_analysis: {
-      missing_perspectives: [],
       stereotypical_associations: signals.filter((signal) => signal.category === "stereotype_association").map((signal) => signal.explanation)
     }
   };
@@ -454,12 +418,12 @@ function analysisQuestion(evidence: EvidenceItem[], text: string): AnalysisFindi
   const id = makeId("ev_ai_question");
   evidence.push({
     id,
-    claim: "AI-assisted perspective question, not a confirmed omission.",
+    claim: "AI-assisted critical-reading question.",
     supportingText: text,
     sourceUrl: null,
     sourceLabel: "Ellipsis AI analysis note",
     kind: "analysis_note",
-    explanation: "A single source cannot prove omission. Use this question to inspect the full source and related reporting.",
+    explanation: "Use this question to inspect the source text and the evidence supporting its central claims.",
     confidenceScore: 46,
     confidenceLabel: "Low"
   });
@@ -504,8 +468,6 @@ function isAiPayload(value: AiPayload) {
     Array.isArray(value.signals) &&
     Array.isArray(value.review_questions) &&
     Array.isArray(value.findings) &&
-    Array.isArray(value.source_participation?.named_sources) &&
-    Array.isArray(value.source_participation?.attributed_perspectives) &&
     Array.isArray(value.important_terms) &&
     Array.isArray(value.fact_checks)
   );

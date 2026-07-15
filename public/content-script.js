@@ -55,7 +55,9 @@ function isLikelyIndexPage(url) {
 }
 
 function isNoisyBlock(text) {
-  return /^(advertisement|subscribe|log in|sign up|create account|listen to this article|share full article|skip to content|live updates?)$/i.test(text);
+  return /^(advertisement|subscribe|log in|sign up|create account|listen to this article|share full article|skip to content|live updates?|link copied|read full bio|add .+ on google)$/i.test(text) ||
+    /^(?:[A-Z][\w.'’–-]+(?:\s+[A-Z][\w.'’–-]+){0,4})\s+is\s+(?:an?|the)\s+.{0,120}\b(?:editor|journalist|reporter|correspondent)\b/i.test(text) ||
+    /^(?:[A-Z][\w.'’–-]+(?:\s+[A-Z][\w.'’–-]+){0,4})\s+has\s+(?:worked|covered|reported)\b/i.test(text);
 }
 
 function cleanReadableBlock(text) {
@@ -157,7 +159,7 @@ function extractReadableText() {
     return "";
   }
 
-  return best.text.slice(0, 30000);
+  return best.text;
 }
 
 function ensureHighlightStyle() {

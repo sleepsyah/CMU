@@ -34,7 +34,6 @@ class LinguisticEvidence(BaseModel):
 class ContextualAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    missing_perspectives: list[str] = Field(default_factory=list)
     stereotypical_associations: list[str] = Field(default_factory=list)
 
 

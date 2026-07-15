@@ -30,20 +30,13 @@ async def analyze_text_bias(raw_text: str, registry: ModelRegistry, settings: Se
 def compile_scores(raw_text: str, tier1: Tier1Metrics, contextual: ContextualAnalysis) -> Scores:
     """Normalize model outputs to the requested 1-100 bias scales."""
 
-    political_context = clamp(
-        (len(contextual.missing_perspectives) * 0.13)
-        + (0.12 if any("informational parity" in item.lower() for item in contextual.missing_perspectives) else 0.0),
-        0.0,
-        1.0,
-    )
     stereotype_context = clamp(len(contextual.stereotypical_associations) * 0.16, 0.0, 1.0)
 
     political = weighted_sum(
         [
-            (tier1.political_classifier_score, 0.38),
-            (tier1.spin_density, 0.24),
-            (tier1.tdsa_asymmetry_delta, 0.20),
-            (political_context, 0.18),
+            (tier1.political_classifier_score, 0.46),
+            (tier1.spin_density, 0.30),
+            (tier1.tdsa_asymmetry_delta, 0.24),
         ]
     )
     gender = weighted_sum(

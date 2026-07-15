@@ -72,10 +72,6 @@ describe("native Codex connection", () => {
       signals: [],
       review_questions: [],
       findings: [{ section: "main_issue", text: "Artemis II is a crewed lunar test mission.", evidence_quote: "NASA said Artemis II carries four astronauts around the Moon and returns them to Earth." }],
-      source_participation: {
-        named_sources: [{ name: "NASA", evidence_quote: "NASA said Artemis II carries four astronauts around the Moon and returns them to Earth." }],
-        attributed_perspectives: [{ text: "NASA presents the mission as preparation for later lunar missions.", evidence_quote: "The mission tests the Orion spacecraft with people aboard and prepares for later lunar missions." }]
-      },
       important_terms: [],
       fact_checks: [{
         claim: "Artemis II carries four astronauts around the Moon.",
@@ -96,7 +92,7 @@ describe("native Codex connection", () => {
     expect(result.backendBias?.source).toBe("codex-enhanced");
     expect(result.biasProfile).toEqual(payload.overall_bias);
     expect(result.contentType === "article" && result.genre).toBe("event");
-    expect(result.contentType === "article" && result.quotedPeopleOrGroups[0].text).toBe("NASA");
+    expect(result.contentType === "article" && result.sourcesAndVoices[0].displayName).toBe("NASA");
 
     const noResearchPayload = {
       ...payload,

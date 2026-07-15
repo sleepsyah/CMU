@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createNativeMessageDecoder, encodeNativeMessage } from "./native-protocol.mjs";
 import { EXTENSION_ID, hostManifest, sourceLauncherContents } from "./install.mjs";
 import { configuredMcpServerNames, RESTRICTED_FEATURES, restrictedCodexConfig } from "./restrictions.mjs";
-import { codexItemIsAllowed, codexTraceItemId, compactReasoningSummary } from "./analysis.mjs";
+import { buildAnalysisPrompt, codexItemIsAllowed, codexTraceItemId, compactReasoningSummary, OUTPUT_SCHEMA } from "./analysis.mjs";
 import { buildClaudeAnalysisArgs, claudeToolIsAllowed, consumeClaudeMessage, createClaudeTraceState, parseClaudeAuthStatus, structuredClaudeOutput } from "./claude.mjs";
 import { providerFromPayload } from "./host.mjs";
 
@@ -64,6 +64,22 @@ describe("Chrome Native Messaging protocol", () => {
     const result = compactReasoningSummary("I need to search for the official record and compare it with a second source before deciding how the claim affects the analysis. Then I should format the JSON output and verify every field.");
     expect(result.length).toBeLessThanOrEqual(150);
     expect(result.split(/[.!?]/).filter(Boolean)).toHaveLength(1);
+  });
+
+  it("leaves Sources and Voices to the explicit local attribution pipeline", () => {
+    expect(OUTPUT_SCHEMA.properties.source_participation).toBeUndefined();
+    const { prompt } = buildAnalysisPrompt({ raw_text: "A sufficiently long article passage says that Jane Smith of the City Council supports the proposal because it would reduce costs for local residents and small businesses." });
+    expect(prompt).toMatch(/Sources and Voices are extracted locally from explicit attribution patterns/i);
+    expect(prompt).toMatch(/Do not infer ideological positions, missing perspectives, fairness, balance/i);
+  });
+
+  it("does not silently truncate source text at the former 30,000-character limit", () => {
+    const rawText = "A complete live-blog update with attributed source evidence. ".repeat(700);
+    expect(rawText.length).toBeGreaterThan(30_000);
+    const built = buildAnalysisPrompt({ raw_text: rawText });
+    expect(built.rawText).toHaveLength(rawText.trim().length);
+    expect(built.source.raw_text).toHaveLength(rawText.trim().length);
+    expect(() => buildAnalysisPrompt({ raw_text: "Long source evidence. ".repeat(7_000) })).toThrow(/instead of silently truncating/i);
   });
 
   it("dispatches provider-aware native requests", () => {

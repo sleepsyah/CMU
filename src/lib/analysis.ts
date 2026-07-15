@@ -12,6 +12,7 @@ import type {
   FrameLabel,
   FramingProfile
 } from "../types";
+import { extractSourcesAndVoices } from "./sources";
 
 const LOADED_TERMS = [
   "radical",
@@ -356,122 +357,10 @@ function loadedLanguageFindings(page: ExtractedPage, evidenceItems: EvidenceItem
   return results;
 }
 
-function quotedSources(text: string) {
-  const sentences = splitSentences(text);
-  const values = new Map<string, string>();
-  const patterns = [
-    new RegExp(`(?:According to|according to)\\s+(?:the\\s+)?(${NAMED_ACTOR})`, "g"),
-    new RegExp(`(${NAMED_ACTOR})\\s+(?:said|says|told|wrote|argued)\\b`, "g"),
-    new RegExp(`(?:said|says|told|wrote|argued)\\s+(${NAMED_ACTOR})`, "g")
-  ];
-
-  for (const sentence of sentences) {
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      for (const match of sentence.matchAll(pattern)) {
-        const name = normalizeWhitespace(match[1] || "").replace(/^The\s+/i, "");
-        if (name.length > 2 && name.length < 80 && !GENERIC_SOURCE_NAMES.test(name)) values.set(name, sentence);
-        if (values.size >= 10) break;
-      }
-    }
-  }
-  return Array.from(values, ([name, sentence]) => ({ name, sentence }));
-}
-
-function perspectiveFindings(page: ExtractedPage, evidenceItems: EvidenceItem[], sentences: string[], quoted: ReturnType<typeof quotedSources>) {
-  const results: AnalysisFinding[] = [];
-  for (const source of quoted) {
-    const evidenceId = addEvidence(evidenceItems, page, {
-      claim: `Attributed source identified: ${source.name}.`,
-      supportingText: source.sentence,
-      explanation: "The source is named in an attribution pattern. This does not establish the source's viewpoint or expertise.",
-      confidenceScore: 66
-    });
-    results.push(finding(`Attributed perspective from ${source.name}.`, [evidenceId], 66));
-  }
-
-  const viewpointPatterns = [
-    { pattern: /\b(supporters|backers|advocates)\b/i, text: "A supportive viewpoint is described." },
-    { pattern: /\b(critics|opponents)\b/i, text: "A critical or opposing viewpoint is described." }
-  ];
-  for (const item of viewpointPatterns) {
-    const sentence = sentences.find((candidate) => item.pattern.test(candidate));
-    if (!sentence) continue;
-    const evidenceId = addEvidence(evidenceItems, page, {
-      claim: item.text,
-      supportingText: sentence,
-      explanation: "The source text explicitly labels this viewpoint, although it may not name or quote a specific person.",
-      confidenceScore: 58
-    });
-    results.push(finding(item.text, [evidenceId], 58));
-  }
-
-  const genericRoles = new Map<string, string>();
-  const genericPattern = /\b(researchers|experts|officials|residents|students|workers|patients|families|witnesses|tenants|tenant advocates|business owners|budget staff)\s+(?:said|say|found|reported|argued|warned|explained|requested)\b/i;
-  for (const sentence of sentences) {
-    const role = sentence.match(genericPattern)?.[1];
-    if (role) genericRoles.set(role.toLowerCase(), sentence);
-  }
-  for (const [role, sentence] of genericRoles) {
-    const evidenceId = addEvidence(evidenceItems, page, {
-      claim: `Attributed ${role} perspective identified.`,
-      supportingText: sentence,
-      explanation: "The source attributes this passage to a stakeholder category but does not necessarily identify a named speaker or establish expertise.",
-      confidenceScore: 56
-    });
-    results.push(finding(`An attributed perspective from ${role} is included.`, [evidenceId], 56));
-  }
-  return results.slice(0, 8);
-}
-
-function missingPerspectiveFindings(
-  page: ExtractedPage,
-  evidenceItems: EvidenceItem[],
-  included: AnalysisFinding[],
-  quoted: ReturnType<typeof quotedSources>,
-  genre: ArticleGenre
-) {
-  const joined = included.map((item) => item.text).join(" ").toLowerCase();
-  const detected = quoted.length ? quoted.map((source) => source.name).join(", ") : "No named attributed sources detected";
-  const suggestions: string[] = [];
-  const hasIndependentContext = /\b(independent|expert|researcher|study|university|nonpartisan)\b/i.test(page.text);
-  const hasAffectedVoice = /\b(residents|students|workers|patients|families|voters|tenants|tenant advocates|business owners)\s+(?:said|say|told|argued|reported|explained)\b/i.test(page.text);
-
-  if (genre === "opinion") {
-    if (!joined.match(/critical|opposing|counter/)) suggestions.push("Does the argument address the strongest reasonable counterargument?");
-    if (!quoted.length && !/\b(study|report|data|record|document)\b/i.test(page.text)) suggestions.push("Which evidence supports the author's central claim?");
-  } else if (genre === "data_report") {
-    if (!/\b(method|methodology|sample|margin of error|limitation|confidence interval)\b/i.test(page.text)) suggestions.push("Does the source explain the data's method, sample, and limits?");
-    if (!hasIndependentContext) suggestions.push("Would independent expert interpretation change how the findings should be read?");
-  } else if (genre === "event") {
-    if (!hasAffectedVoice) suggestions.push("Are people directly affected by the event represented in the reporting?");
-    if (included.length < 2 && !hasIndependentContext) suggestions.push("Is the main account corroborated by another source or primary record?");
-  } else if (genre === "investigation") {
-    if (!/\b(responded|declined to comment|response|spokesperson said)\b/i.test(page.text)) suggestions.push("Did the people or organizations under scrutiny receive a meaningful chance to respond?");
-    if (!/\b(record|document|filing|data|interview)\b/i.test(page.text)) suggestions.push("Which primary records support the investigation's central claim?");
-  } else {
-    if (!hasAffectedVoice) suggestions.push("Would a directly affected person's perspective add important context?");
-    if (!hasIndependentContext) suggestions.push("Would primary documents or independent expertise clarify the central claim?");
-  }
-
-  return suggestions.slice(0, 2).map((text) => {
-    const noteId = addAnalysisNote(
-      evidenceItems,
-      page,
-      "Perspective to check, not a confirmed omission.",
-      `Attributed sources detected by the local parser: ${detected}.`,
-      "Absence is difficult to prove from extracted text, so this is presented as a review question rather than a factual claim."
-    );
-    return finding(text, [noteId], 35);
-  });
-}
-
 function framingFindings(
   page: ExtractedPage,
   evidenceItems: EvidenceItem[],
-  loaded: ArticleAnalysis["loadedLanguageExamples"],
-  included: AnalysisFinding[],
-  quoted: ReturnType<typeof quotedSources>
+  loaded: ArticleAnalysis["loadedLanguageExamples"]
 ) {
   const results: AnalysisFinding[] = [];
   if (loaded.length) {
@@ -482,25 +371,6 @@ function framingFindings(
         50
       )
     );
-  }
-  if (included.some((item) => /supportive/.test(item.text)) && included.some((item) => /critical|opposing/.test(item.text))) {
-    results.push(
-      finding(
-        "The extracted text organizes part of the issue around supportive and critical reactions.",
-        included.flatMap((item) => item.evidenceIds),
-        56
-      )
-    );
-  }
-  if (included.length <= 1) {
-    const noteId = addAnalysisNote(
-      evidenceItems,
-      page,
-      "Narrow attributed-source base in extracted text.",
-      `${included.length} attributed perspective${included.length === 1 ? " was" : "s were"} detected by the local parser.`,
-      "Extraction or attribution patterns can miss sources, so this is a low-confidence review prompt."
-    );
-    results.push(finding("The extracted text may rely on a narrow attributed-source base.", [noteId], 38));
   }
   if (!results.length) {
     const noteId = addAnalysisNote(
@@ -518,10 +388,7 @@ function framingFindings(
 function framingProfileFor(
   page: ExtractedPage,
   evidenceItems: EvidenceItem[],
-  sentences: string[],
-  quoted: ReturnType<typeof quotedSources>,
-  included: AnalysisFinding[],
-  reviewQuestions: AnalysisFinding[]
+  sentences: string[]
 ): FramingProfile {
   const candidates = FRAME_PATTERNS.map((frame) => {
     const matches = sentences.filter((sentence) => frame.pattern.test(sentence)).slice(0, 4);
@@ -551,10 +418,7 @@ function framingProfileFor(
   });
 
   return {
-    dominantFrames,
-    namedSourceCount: quoted.length,
-    attributedPerspectiveCount: included.length,
-    reviewQuestions
+    dominantFrames
   };
 }
 
@@ -564,33 +428,10 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
   const summary = summaryEvidence(page, evidenceItems, sentences);
   const mainIssue = mainIssueFinding(page, evidenceItems, sentences);
   const loaded = loadedLanguageFindings(page, evidenceItems, sentences);
-  const quoted = quotedSources(page.text);
-  const included = perspectiveFindings(page, evidenceItems, sentences, quoted);
+  const sourceExtraction = extractSourcesAndVoices(page.text);
   const genre = inferArticleGenre(page);
-  const missing = missingPerspectiveFindings(page, evidenceItems, included, quoted, genre);
-  const framingNotes = framingFindings(page, evidenceItems, loaded, included, quoted);
-  const framingProfile = framingProfileFor(page, evidenceItems, sentences, quoted, included, missing);
-  const quotedFindings = quoted.map((source) => {
-    const existing = evidenceItems.find((item) => item.claim.includes(source.name));
-    return finding(source.name, existing ? [existing.id] : [], 66);
-  });
-  const displayedIncluded = included.length
-    ? included
-    : [
-        finding(
-          "No named or explicitly labeled perspectives were reliably detected.",
-          [
-            addAnalysisNote(
-              evidenceItems,
-              page,
-              "No perspectives reliably detected.",
-              "The local attribution parser returned no named or explicitly labeled viewpoints.",
-              "This may reflect extraction limits rather than the source itself."
-            )
-          ],
-          32
-        )
-      ];
+  const framingNotes = framingFindings(page, evidenceItems, loaded);
+  const framingProfile = framingProfileFor(page, evidenceItems, sentences);
   const confidenceScore = confidenceFor(page, evidenceItems);
 
   return {
@@ -611,9 +452,10 @@ function analyzeArticle(page: ExtractedPage): ArticleAnalysis {
     mainIssue,
     framingNotes,
     loadedLanguageExamples: loaded,
-    quotedPeopleOrGroups: quotedFindings,
-    includedPerspectives: displayedIncluded,
-    missingPerspectives: missing,
+    sourcesAndVoices: sourceExtraction.sources,
+    sourceSummary: sourceExtraction.sourceSummary,
+    sourceEvents: sourceExtraction.events,
+    sourceCoverage: sourceExtraction.coverage,
     framingProfile
   };
 }
@@ -792,8 +634,7 @@ export function keyFindingsFor(analysis: Analysis): AnalysisFinding[] {
   const candidates = analysis.contentType === "article"
     ? [
         ...analysis.loadedLanguageExamples,
-        ...analysis.framingNotes.filter((item) => !item.text.startsWith("No strong framing signal")),
-        ...analysis.missingPerspectives
+        ...analysis.framingNotes.filter((item) => !item.text.startsWith("No strong framing signal"))
       ]
     : [
         ...analysis.proposedChanges.filter((item) => !analysis.summary.includes(item.text)).slice(0, 1),

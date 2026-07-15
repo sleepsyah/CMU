@@ -1,4 +1,5 @@
-import type { AiSettings, Analysis, AnalysisFinding, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis } from "../types";
+import type { AiSettings, Analysis, AnalysisFinding, ArticleAnalysis, ArticleSource, AttributionEvent, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis, SourceEvidence } from "../types";
+import { validateSourceDisplayName } from "./sources";
 
 const HISTORY_KEY = "ellipsis.savedAnalyses";
 const FEEDBACK_KEY = "ellipsis.feedbackLogs";
@@ -39,6 +40,63 @@ function migrateEvidence(value: EvidenceItem, sourceName: string): EvidenceItem 
   };
 }
 
+function migrateSourceEvidence(value: unknown): SourceEvidence {
+  const item = (value || {}) as Partial<SourceEvidence> & { text?: string };
+  const legacyType = String(item.attributionType || "paraphrased");
+  const attributionType = legacyType === "data_provider" ? "document_source" : legacyType === "reporting_intermediary" ? "paraphrased" : item.attributionType || "paraphrased";
+  return {
+    evidenceText: item.evidenceText || item.text || "",
+    ...(item.sourceSpan ? { sourceSpan: item.sourceSpan } : {}),
+    ...(item.quotedText ? { quotedText: item.quotedText } : {}),
+    ...(typeof item.sentenceIndex === "number" ? { sentenceIndex: item.sentenceIndex } : {}),
+    ...(item.blockId ? { blockId: item.blockId } : {}),
+    attributionType
+  };
+}
+
+function migrateArticleSource(value: unknown): ArticleSource | null {
+  const item = (value || {}) as Partial<ArticleSource>;
+  const evidence = Array.isArray(item.evidence) ? item.evidence.map(migrateSourceEvidence).filter((entry) => entry.evidenceText) : [];
+  if (!evidence.length) return null;
+  const validated = validateSourceDisplayName(String(item.displayName || item.canonicalName || ""), evidence[0]?.evidenceText || "");
+  if (!validated.name) return null;
+  const aliases = Array.from(new Set([...(Array.isArray(item.aliases) ? item.aliases : []), validated.name]
+    .map((alias) => validateSourceDisplayName(String(alias), evidence[0]?.evidenceText || "").name)
+    .filter((alias): alias is string => Boolean(alias))));
+  const legacyRoles = (Array.isArray(item.sourceRoles) ? item.sourceRoles : [])
+    .map((role) => String(role) === "data_provider" ? "document_source" : role)
+    .filter((role) => String(role) !== "reporting_intermediary") as ArticleSource["sourceRoles"];
+  const entityType = String(item.entityType) === "data_source" ? "document" : item.entityType || "organization";
+  return {
+    canonicalId: item.canonicalId || `source-${validated.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    displayName: validated.name,
+    canonicalName: validated.name,
+    aliases,
+    entityType,
+    sourceRoles: legacyRoles,
+    contributionSummary: item.contributionSummary || "Provided information explicitly attributed by the article.",
+    evidence,
+    ...(item.affiliation ? { affiliation: item.affiliation } : {}),
+    ...(Array.isArray(item.reportedVia) && item.reportedVia.length ? { reportedVia: item.reportedVia } : {}),
+    mentionCount: typeof item.mentionCount === "number" ? item.mentionCount : evidence.length
+  };
+}
+
+function migrateSourceEvent(value: unknown): AttributionEvent | null {
+  const item = (value || {}) as Partial<AttributionEvent> & { text?: string };
+  const evidence = migrateSourceEvidence(item);
+  const validated = validateSourceDisplayName(String(item.actor || item.sourceSpan || ""), evidence.evidenceText);
+  if (!validated.name) return null;
+  return {
+    ...evidence,
+    actor: validated.name,
+    claim: item.claim || evidence.evidenceText,
+    sourceRole: item.sourceRole,
+    reportingIntermediary: item.reportingIntermediary,
+    mentionedOnly: Boolean(item.mentionedOnly)
+  };
+}
+
 function migrateMetric(value: Partial<BiasMetric> | undefined): BiasMetric {
   const score = typeof value?.score === "number" && Number.isFinite(value.score) ? value.score : null;
   const evidenceCount = typeof value?.evidenceCount === "number" ? value.evidenceCount : score === null ? 0 : 1;
@@ -67,7 +125,6 @@ function migrateBackendBias(value: BackendBiasAnalysis | undefined): BackendBias
       signals: value.linguistic_evidence?.signals || []
     },
     contextual_analysis: {
-      missing_perspectives: value.contextual_analysis?.missing_perspectives || [],
       stereotypical_associations: value.contextual_analysis?.stereotypical_associations || []
     }
   };
@@ -76,8 +133,15 @@ function migrateBackendBias(value: BackendBiasAnalysis | undefined): BackendBias
 export function migrateSavedAnalysis(value: SavedAnalysis): SavedAnalysis | null {
   const legacy = value?.analysis as Analysis | undefined;
   if (!legacy || (legacy.contentType !== "article" && legacy.contentType !== "bill")) return null;
+  const {
+    quotedPeopleOrGroups: _legacyQuoted,
+    perspectiveSources: _legacyPerspectiveSources,
+    includedPerspectives: _legacyIncluded,
+    missingPerspectives: _legacyMissing,
+    ...legacyBase
+  } = legacy as Analysis & Record<string, unknown>;
   const common = {
-    ...legacy,
+    ...legacyBase,
     author: legacy.author || "",
     publishedAt: legacy.publishedAt || "",
     summaryEvidenceIds: Array.isArray(legacy.summaryEvidenceIds) ? legacy.summaryEvidenceIds : [],
@@ -96,15 +160,22 @@ export function migrateSavedAnalysis(value: SavedAnalysis): SavedAnalysis | null
           phrase: item.phrase,
           context: item.context
         })),
-        quotedPeopleOrGroups: (legacy.quotedPeopleOrGroups || []).map(migrateFinding),
-        includedPerspectives: (legacy.includedPerspectives || []).map(migrateFinding),
-        missingPerspectives: (legacy.missingPerspectives || []).map(migrateFinding),
-        framingProfile: legacy.framingProfile || {
-          dominantFrames: [],
-          namedSourceCount: (legacy.quotedPeopleOrGroups || []).length,
-          attributedPerspectiveCount: (legacy.includedPerspectives || []).length,
-          reviewQuestions: (legacy.missingPerspectives || []).map(migrateFinding)
-        }
+        sourcesAndVoices: ((legacy as ArticleAnalysis).sourcesAndVoices || [])
+          .map(migrateArticleSource)
+          .filter((item): item is ArticleSource => Boolean(item))
+          .slice(0, 8),
+        sourceSummary: (legacy as ArticleAnalysis).sourceSummary || "",
+        sourceEvents: (legacy.sourceEvents || []).map(migrateSourceEvent).filter((item): item is AttributionEvent => Boolean(item)),
+        sourceCoverage: legacy.sourceCoverage || {
+          processedCharacterCount: 0,
+          totalCharacterCount: 0,
+          blockCount: 0,
+          skippedBlockCount: 0,
+          skippedCharacterCount: 0,
+          skipped: false,
+          truncated: false
+        },
+        framingProfile: { dominantFrames: legacy.framingProfile?.dominantFrames || [] }
       }
     : {
         ...common,
