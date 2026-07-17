@@ -85,13 +85,60 @@ describe("local helper privacy boundary", () => {
     expect(isLoopbackBackendUrl("http://192.168.1.20:8000")).toBe(false);
   });
 
-  it("does not contact the optional Python helper when AI is off", async () => {
-    const fetchMock = vi.fn();
+  it("uses the Python helper for model signals even when AI is off", async () => {
+    const backendPayload = {
+      scores: {
+        political_bias: { score: 60, confidence: 0.7 },
+        gender_bias: { score: 3, confidence: 0.2 },
+        ethnicity_bias: { score: 4, confidence: 0.2 },
+        class_bias: { score: 12, confidence: 0.3 }
+      },
+      linguistic_evidence: {
+        spin_words_detected: ["radical"],
+        target_dependent_asymmetries: [],
+        counterfactual_sentiment_delta: 0
+      },
+      contextual_analysis: { stereotypical_associations: [] }
+    };
+    const fetchMock = vi.fn(async (input: string | URL) => ({
+      ok: true,
+      json: async () => String(input).endsWith("/health") ? { status: "ok", ready: true } : backendPayload
+    }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await analyzePageWithBackend(page, { aiSettings: { enabled: false, provider: "codex" } });
+    const result = await analyzePageWithBackend(page, { aiSettings: { enabled: false, provider: "codex" } });
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/health"), expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/analyze"), expect.objectContaining({ method: "POST" }));
+    expect(result.backendBias?.source).toBe("hybrid-backend");
+  });
+
+  it("asks the native connector to start the Python helper when it is not already ready", async () => {
+    const backendPayload = {
+      scores: {
+        political_bias: { score: 60, confidence: 0.7 },
+        gender_bias: { score: 3, confidence: 0.2 },
+        ethnicity_bias: { score: 4, confidence: 0.2 }
+      },
+      linguistic_evidence: {
+        spin_words_detected: ["radical"],
+        target_dependent_asymmetries: [],
+        counterfactual_sentiment_delta: 0
+      },
+      contextual_analysis: { stereotypical_associations: [] }
+    };
+    const fetchMock = vi.fn(async (input: string | URL) => ({
+      ok: true,
+      json: async () => String(input).endsWith("/health") ? { status: "ok", ready: false } : backendPayload
+    }));
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, result: { ready: true, backendUrl: "http://127.0.0.1:8000" } });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage } });
+
+    const result = await analyzePageWithBackend(page, { aiSettings: { enabled: false, provider: "codex" } });
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: "ensure_backend" }));
+    expect(result.backendBias?.source).toBe("hybrid-backend");
   });
 
   it("passes evidence-linked Python signals to Codex when the helper is ready", async () => {

@@ -50,14 +50,16 @@ export async function highlightActivePagePassage(text: string): Promise<boolean>
   if (!tab?.id || !siteAccessPattern(tab.url || "")) return false;
 
   try {
-    let response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_HIGHLIGHT_TEXT", text: excerpt });
-    if (!response?.ok) {
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content-script.js"] });
-      response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_HIGHLIGHT_TEXT", text: excerpt });
-    }
+    const response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_HIGHLIGHT_TEXT", text: excerpt });
     return Boolean(response?.ok);
   } catch {
-    return false;
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content-script.js"] });
+      const response = await chrome.tabs.sendMessage(tab.id, { type: "ELLIPSIS_HIGHLIGHT_TEXT", text: excerpt });
+      return Boolean(response?.ok);
+    } catch {
+      return false;
+    }
   }
 }
 

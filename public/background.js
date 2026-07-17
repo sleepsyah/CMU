@@ -46,7 +46,7 @@ function connectNativeHost() {
 function requestNative(action, payload) {
   const port = connectNativeHost();
   const id = crypto.randomUUID();
-  const timeoutMs = action === "analyze" ? null : 20_000;
+  const timeoutMs = action === "analyze" || action === "ensure_backend" ? null : 20_000;
   return new Promise((resolve, reject) => {
     const timeout = timeoutMs === null ? undefined : setTimeout(() => {
       pendingNativeRequests.delete(id);

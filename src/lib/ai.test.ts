@@ -111,4 +111,47 @@ describe("native Codex connection", () => {
     expect(claudeResult.backendBias?.source).toBe("ai-enhanced");
 
   });
+
+  it("repairs missing optional AI arrays while keeping source validation active", async () => {
+    const page = {
+      title: "Transit hearing",
+      url: "https://example.com/transit",
+      sourceName: "Example",
+      author: "",
+      publishedAt: "",
+      text: "The city council held a public hearing on the proposed transit schedule. Officials said the plan would add two evening routes and move one morning departure. Council members will vote after reviewing public comments next week.",
+      contentType: "article" as const,
+      links: []
+    };
+    const partialPayload = {
+      summary: "The council is reviewing a transit schedule that would add evening routes and change one morning departure.",
+      summary_evidence: ["Officials said the plan would add two evening routes and move one morning departure."],
+      overall_bias: { score: 10, level: "minimal" },
+      findings: [{
+        section: "main_issue",
+        text: "The council is considering a revised transit schedule.",
+        evidence_quote: "The city council held a public hearing on the proposed transit schedule."
+      }]
+    };
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage: vi.fn().mockResolvedValue({ ok: true, result: partialPayload }) } });
+    const result = await enhanceAnalysisWithCodex(analyzePage(page), page, "trace-partial");
+    expect(result.aiAnalysis?.summaryRefined).toBe(true);
+    expect(result.aiAnalysis?.factChecks).toEqual([]);
+    expect(result.biasProfile?.score).toBe(10);
+  });
+
+  it("rejects prose-only AI output without breaking the local analysis", async () => {
+    const page = {
+      title: "Transit hearing",
+      url: "https://example.com/transit",
+      sourceName: "Example",
+      author: "",
+      publishedAt: "",
+      text: "The city council held a public hearing on the proposed transit schedule. Officials said the plan would add two evening routes and move one morning departure. Council members will vote after reviewing public comments next week.",
+      contentType: "article" as const,
+      links: []
+    };
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage: vi.fn().mockResolvedValue({ ok: true, result: "This is not structured JSON." }) } });
+    await expect(enhanceAnalysisWithCodex(analyzePage(page), page, "trace-invalid")).rejects.toThrow(/usable structured analysis/i);
+  });
 });

@@ -12,15 +12,16 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
-VENV = BACKEND / ".venv"
+STATE_ROOT = Path(os.environ.get("ELLIPSIS_BACKEND_STATE_DIR", str(BACKEND))).expanduser()
+VENV = STATE_ROOT / ".venv"
 PYTHON = VENV / "bin" / "python"
 PIP = VENV / "bin" / "pip"
 HOST = "127.0.0.1"
 PORT = "8000"
 BASE_URL = f"http://{HOST}:{PORT}"
-PID_FILE = BACKEND / ".backend.pid"
-LOG_FILE = BACKEND / ".backend.log"
-HF_CACHE = BACKEND / ".hf-cache"
+PID_FILE = STATE_ROOT / ".backend.pid"
+LOG_FILE = STATE_ROOT / ".backend.log"
+HF_CACHE = STATE_ROOT / ".hf-cache"
 
 
 def run(command: list[str], **kwargs: object) -> None:
@@ -50,6 +51,7 @@ def existing_backend_is_healthy() -> bool:
 
 
 def ensure_venv() -> None:
+    STATE_ROOT.mkdir(parents=True, exist_ok=True)
     if not PYTHON.exists():
         print("Creating backend virtual environment...")
         run([sys.executable, "-m", "venv", str(VENV)])

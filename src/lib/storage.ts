@@ -229,7 +229,7 @@ async function readMigratedValue<T>(key: string, legacyKey: string, fallback: T)
 
 export async function getSavedAnalyses() {
   const saved = await readMigratedValue<SavedAnalysis[]>(HISTORY_KEY, LEGACY_HISTORY_KEY, []);
-  return saved.map(migrateSavedAnalysis).filter((item): item is SavedAnalysis => Boolean(item));
+  return Array.isArray(saved) ? saved.map(migrateSavedAnalysis).filter((item): item is SavedAnalysis => Boolean(item)) : [];
 }
 
 export async function saveAnalysis(item: SavedAnalysis, confirmDelete: () => boolean) {
@@ -258,7 +258,8 @@ export async function clearSavedAnalyses() {
 }
 
 export async function getFeedbackLogs() {
-  return readMigratedValue<FeedbackLog[]>(FEEDBACK_KEY, LEGACY_FEEDBACK_KEY, []);
+  const logs = await readMigratedValue<FeedbackLog[]>(FEEDBACK_KEY, LEGACY_FEEDBACK_KEY, []);
+  return Array.isArray(logs) ? logs : [];
 }
 
 export async function clearFeedbackLogs() {

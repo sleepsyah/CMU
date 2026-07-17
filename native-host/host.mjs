@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { CodexAppServer } from "./app-server.mjs";
 import { analyzeWithCodex } from "./analysis.mjs";
+import { ensurePythonBackend, pythonBackendStatus } from "./backend-helper.mjs";
 import { ClaudeCodeRuntime } from "./claude.mjs";
 import { createNativeMessageDecoder, encodeNativeMessage } from "./native-protocol.mjs";
 
@@ -30,6 +31,8 @@ function resetIdleTimer() {
 export async function handleNativeAction(action, payload = {}, onProgress) {
   resetIdleTimer();
   const provider = providerFromPayload(payload);
+  if (action === "backend_status") return pythonBackendStatus();
+  if (action === "ensure_backend") return ensurePythonBackend(onProgress);
   if (action === "status") return provider === "claude" ? claudeRuntime.status() : appServer.status();
   if (action === "login") return provider === "claude" ? claudeRuntime.beginLogin() : appServer.beginLogin();
   if (action === "analyze") {

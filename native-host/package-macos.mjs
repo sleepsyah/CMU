@@ -43,11 +43,17 @@ async function standaloneNodeBinary() {
 
 await rm(app, { recursive: true, force: true });
 await mkdir(join(resources, "native-host"), { recursive: true });
+await mkdir(join(resources, "scripts"), { recursive: true });
 await mkdir(join(resources, "node_modules/@openai"), { recursive: true });
 await mkdir(macos, { recursive: true });
-for (const file of ["app-server.mjs", "analysis.mjs", "claude.mjs", "host.mjs", "native-protocol.mjs", "restrictions.mjs"]) {
+for (const file of ["app-server.mjs", "analysis.mjs", "backend-helper.mjs", "claude.mjs", "host.mjs", "native-protocol.mjs", "restrictions.mjs"]) {
   await cp(join(root, "native-host", file), join(resources, "native-host", file));
 }
+await cp(join(root, "backend"), join(resources, "backend"), {
+  recursive: true,
+  filter: (source) => !/(?:^|\/)(?:\.venv|\.hf-cache|\.backend\.log|\.backend\.pid)(?:\/|$)/.test(source)
+});
+await cp(join(root, "scripts/start_backend.py"), join(resources, "scripts/start_backend.py"));
 await cp(sdkDir, join(resources, "node_modules/@openai/codex-sdk"), { recursive: true });
 await cp(codexDir, join(resources, "node_modules/@openai/codex"), { recursive: true });
 const codexPackage = JSON.parse(await readFile(join(codexDir, "package.json"), "utf8"));

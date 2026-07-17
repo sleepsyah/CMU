@@ -257,6 +257,21 @@ export interface BiasProfile {
   summary: string;
 }
 
+export interface OutletCoverageEstimate {
+  status: "estimated" | "limited" | "unavailable";
+  outletHost: string;
+  topicLabel: string;
+  topicTerms: string[];
+  windowDays: number;
+  relatedCount: number;
+  sampledArticleCount: number;
+  percentage: number | null;
+  method: string;
+  sampledUrls: string[];
+  generatedAt: string;
+  note: string;
+}
+
 export interface BaseAnalysis {
   id: string;
   url: string;
@@ -274,6 +289,7 @@ export interface BaseAnalysis {
   vocabularyTerms?: VocabularyTerm[];
   backendBias?: BackendBiasAnalysis;
   biasProfile?: BiasProfile;
+  outletCoverage?: OutletCoverageEstimate;
   aiAnalysis?: AiAnalysis;
   aiFailureReason?: string;
 }

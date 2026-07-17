@@ -24,12 +24,10 @@ import { beginAiLogin, checkAiConnection, subscribeAiProgress } from "../lib/ai"
 import { analyzePageWithBackend, biasProfileFromAssessment } from "../lib/backend";
 import { createManualPage, extractActivePage, highlightActivePagePassage } from "../lib/chrome";
 import {
-  clearFeedbackLogs,
   clearSavedAnalyses,
   deleteSavedAnalysis,
   getAiSettings,
   getSavedAnalyses,
-  logFeedback,
   saveAiSettings,
   saveAnalysis
 } from "../lib/storage";
@@ -47,15 +45,19 @@ import type {
   ContentType,
   ExtractedPage,
   FactCheckStatus,
-  FeedbackType,
   SavedAnalysis
 } from "../types";
+import {
+  DetectionFeedbackControl,
+  FeedbackEvaluationPanel,
+  FeedbackProvider,
+  perspectiveFeedbackTarget,
+  signalFeedbackTarget
+} from "./components/DetectionFeedback";
 import { BiasProfileBand, BiasSignalChart, FramingBars } from "./components/InsightCharts";
 
 type AppView = "analysis" | "saved";
 type AnalysisSection = "overview" | "language" | "voices" | "evidence";
-
-const feedbackTypes: FeedbackType[] = ["Helpful", "Confusing", "Incorrect", "Biased"];
 
 const aiProviderMeta = {
   codex: {
@@ -236,6 +238,39 @@ function sourceContext(analysis: Analysis) {
   return `${analysis.sourceName} is the analyzed outlet or source. This page is classified as ${genreLabel(analysis.genre || "general").toLowerCase()}, and the analysis is grounded in the extracted article text.`;
 }
 
+function scoreSourceInfo(analysis: Analysis) {
+  const source = analysis.backendBias?.source;
+  if (source === "hybrid-backend") {
+    return {
+      label: "Python model backend",
+      detail: "Bias scores used the local FastAPI backend with transformer classifiers, then linked signals back to exact source passages.",
+      models: "Political: BABE/MBIC-style RoBERTa lexical-bias classifier. Gender: counterfactual sentiment plus gendered-language checks. Ethnicity: toxicity/coded-hostility and counterfactual sentiment checks. Class: local association checks."
+    };
+  }
+  if (source === "codex-enhanced" || source === "ai-enhanced") {
+    const provider = source === "codex-enhanced" ? "Codex" : "Claude Code";
+    return {
+      label: `${provider} AI`,
+      detail: `Bias scores came from ${provider}'s structured reading of the source, with exact quote validation before display.`,
+      models: analysis.aiAnalysis?.localModelSupport
+        ? "The AI result was supported by local Python backend model signals."
+        : "No Python backend model support was attached to this AI result."
+    };
+  }
+  if (source === "local-fallback") {
+    return {
+      label: "Heuristic fallback",
+      detail: "The Python backend and AI provider were unavailable, so Ellipsis used lower-confidence local rules.",
+      models: "Keyword, association, and source-evidence rules inside the extension."
+    };
+  }
+  return {
+    label: "Local heuristics",
+    detail: "Bias scores used local rules inside the extension.",
+    models: "Keyword, association, and source-evidence rules inside the extension."
+  };
+}
+
 function FindingList({ items, tone = "plain", emptyMessage = "No supported items were identified in the extracted source." }: { items: AnalysisFinding[]; tone?: "plain" | "included" | "question"; emptyMessage?: string }) {
   if (!items.length) return <p className="panel-empty">{emptyMessage}</p>;
   return (
@@ -285,19 +320,174 @@ function OverviewPanel({ analysis }: { analysis: Analysis }) {
 }
 
 type VocabularyItem = { term: string; meaning: string; context?: string };
+type VocabularyAnswer = {
+  term: string;
+  meaning: string;
+  source: string;
+  confidence: "Exact" | "Contextual" | "Uncertain";
+  context?: string;
+  note?: string;
+};
 
 const localDefinitions: Record<string, string> = {
+  alleged: "Claimed to have happened, but not yet proven.",
   appropriation: "Money that a legislature authorizes for a particular public purpose.",
   authorization: "Legal permission for a program, agency, or activity to operate.",
   amendment: "A formal change proposed or made to a bill, law, or other document.",
+  bipartisan: "Supported by people from both major political parties.",
+  caucus: "A group of lawmakers in the same party or with the same goal.",
+  committee: "A smaller group that studies a bill or issue before the full group votes.",
+  compliance: "Following a rule, law, or requirement.",
+  discretionary: "Something that is optional or decided by officials, not automatically required.",
+  expenditure: "Money that is spent.",
+  fiscal: "Related to money, budgets, or government spending.",
+  grant: "Money given for a specific purpose, often by the government.",
+  implementation: "How a plan, policy, or law would actually be put into action.",
+  incumbent: "A person who currently holds an elected office.",
+  injunction: "A court order that tells someone to do something or stop doing something.",
+  jurisdiction: "The area or topic that a government body, court, or agency has power over.",
+  liability: "Legal responsibility for harm, damage, or debt.",
   provision: "A specific rule or requirement inside a law, bill, contract, or policy.",
   mandate: "A requirement that a person, organization, or government body must follow.",
+  moratorium: "A temporary pause or ban on an activity.",
+  ordinance: "A local law, often made by a city or county.",
+  oversight: "Watching or reviewing how a program, agency, or rule is working.",
+  preemption: "When a higher level of government blocks a lower level from making or enforcing its own rule.",
+  procurement: "The process of buying goods or services, often for the government.",
+  referendum: "A vote where the public decides on a law or policy question.",
+  regulation: "A rule made by a government agency.",
+  revenue: "Money received by a government, business, or organization.",
+  sanctions: "Penalties used to pressure a person, group, or country to change behavior.",
+  sponsor: "A lawmaker who officially introduces or supports a bill.",
+  statute: "A written law passed by a legislature.",
   subsidy: "Government financial support intended to lower costs or encourage an activity.",
+  subpoena: "A legal order requiring someone to provide information or appear to testify.",
+  tariff: "A tax on goods imported from another country.",
+  testimony: "A formal statement, often given in court or to lawmakers.",
+  waiver: "Permission to skip or not follow a usual rule.",
   "tax credit": "An amount that directly reduces the tax someone owes.",
   "civil penalty": "A non-criminal fine or consequence for breaking a rule.",
   "reporting requirement": "A rule requiring an organization or agency to provide information on a schedule.",
   "effective date": "The date when a law or rule begins to apply."
 };
+
+const ambiguousDefinitions: Record<string, string[]> = {
+  bill: ["A proposed law.", "A request for payment."],
+  charge: ["A formal accusation.", "A fee or cost.", "To give someone responsibility for something."],
+  motion: ["A formal request for a group or court to make a decision.", "Movement."],
+  party: ["A political group.", "A person or group involved in a legal case or agreement."],
+  sanction: ["A penalty.", "Official permission or approval."],
+  sanctions: ["Penalties.", "Official permissions or approvals."]
+};
+
+const ignoredQuestionWords = new Set(["what", "does", "mean", "means", "meaning", "define", "definition", "here", "this", "word", "term", "the", "a", "an", "about", "explain", "is", "are", "in", "of", "to", "for", "with"]);
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sourceSentencesFor(analysis: Analysis) {
+  return [
+    analysis.summary,
+    ...analysis.evidence.map((item) => item.supportingText),
+    ...(analysis.backendBias?.linguistic_evidence.signals.map((signal) => signal.context) || [])
+  ]
+    .join(" ")
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
+    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
+    .filter((sentence) => sentence.length > 16);
+}
+
+function extractAskedTerm(question: string, terms: VocabularyItem[]) {
+  const quoted = question.match(/["']([^"']{2,80})["']/)?.[1];
+  if (quoted) return quoted.trim();
+
+  const lower = question.toLowerCase();
+  const knownTerms = [
+    ...terms.map((item) => item.term.toLowerCase()),
+    ...Object.keys(localDefinitions),
+    ...Object.keys(ambiguousDefinitions)
+  ].sort((a, b) => b.length - a.length);
+  const known = knownTerms.find((term) => new RegExp(`\\b${escapeRegExp(term)}\\b`, "i").test(lower));
+  if (known) return known;
+
+  const words = lower
+    .replace(/[^a-z0-9 -]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 1 && !ignoredQuestionWords.has(word));
+  return words.at(-1) || question.trim();
+}
+
+function lookupLocalDefinition(term: string) {
+  const lower = term.toLowerCase();
+  const singular = lower.endsWith("s") ? lower.slice(0, -1) : lower;
+  return localDefinitions[lower]
+    ? { term: lower, meaning: localDefinitions[lower] }
+    : localDefinitions[singular]
+      ? { term: singular, meaning: localDefinitions[singular] }
+      : null;
+}
+
+function answerVocabularyQuestion(question: string, analysis: Analysis, terms: VocabularyItem[]): VocabularyAnswer {
+  const askedTerm = extractAskedTerm(question.trim(), terms);
+  const lowerAsked = askedTerm.toLowerCase();
+  const context = sourceSentencesFor(analysis).find((sentence) => new RegExp(`\\b${escapeRegExp(lowerAsked)}s?\\b`, "i").test(sentence));
+  const matched = terms.find((item) => item.term.toLowerCase() === lowerAsked || item.term.toLowerCase().includes(lowerAsked) || lowerAsked.includes(item.term.toLowerCase()));
+
+  if (matched) {
+    return {
+      term: matched.term,
+      meaning: matched.meaning,
+      source: "Source-specific term",
+      confidence: "Exact",
+      context: matched.context || context
+    };
+  }
+
+  const ambiguous = ambiguousDefinitions[lowerAsked];
+  if (ambiguous) {
+    return {
+      term: askedTerm,
+      meaning: ambiguous.join(" In another context, it can also mean: "),
+      source: "Ambiguous local glossary",
+      confidence: context ? "Contextual" : "Uncertain",
+      context,
+      note: context ? "This word has more than one common meaning, so the sentence matters." : "This word has more than one common meaning. Include the sentence for a better local answer."
+    };
+  }
+
+  const local = lookupLocalDefinition(askedTerm);
+  if (local) {
+    return {
+      term: local.term,
+      meaning: local.meaning,
+      source: "Curated local glossary",
+      confidence: "Exact",
+      context
+    };
+  }
+
+  if (context) {
+    return {
+      term: askedTerm,
+      meaning: "I found this word in the source, but I do not have a verified local definition for it yet.",
+      source: "Source-context check",
+      confidence: "Contextual",
+      context,
+      note: analysis.contentType === "bill"
+        ? "For a bill, check whether the word is tied to creating a program, changing a law, spending money, banning something, or requiring someone to act."
+        : "For an article, check whether the word is being used as a fact, quote, opinion, or description."
+    };
+  }
+
+  return {
+    term: askedTerm || "that word",
+    meaning: "I do not have a verified local definition for this yet.",
+    source: "No local match",
+    confidence: "Uncertain",
+    note: "To avoid making up a definition, Ellipsis needs either a curated glossary match or the sentence where the word appears."
+  };
+}
 
 function vocabularyItemsFor(analysis: Analysis): VocabularyItem[] {
   const items = new Map<string, VocabularyItem>();
@@ -324,17 +514,13 @@ function vocabularyItemsFor(analysis: Analysis): VocabularyItem[] {
 function VocabularySection({ analysis, onShowSource }: { analysis: Analysis; onShowSource: (text: string) => void }) {
   const terms = vocabularyItemsFor(analysis);
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<VocabularyAnswer | null>(null);
 
   useEffect(() => { setQuestion(""); setAnswer(null); }, [analysis.id]);
 
   function ask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const query = question.trim().replace(/[?.!,;:"']+$/g, "").toLowerCase();
-    const match = terms.find((item) => query.includes(item.term.toLowerCase()) || item.term.toLowerCase().includes(query));
-    setAnswer(match
-      ? `${match.term}: ${match.meaning}`
-      : `No saved definition matches “${question.trim()}”. Check how the source uses the term, who defines it, and whether its meaning changes across the article.`);
+    setAnswer(answerVocabularyQuestion(question, analysis, terms));
   }
 
   return (
@@ -357,7 +543,16 @@ function VocabularySection({ analysis, onShowSource }: { analysis: Analysis; onS
       <form className="vocabulary-question" onSubmit={ask}>
         <label htmlFor="vocabulary-question">Ask about a term in this source</label>
         <div><input id="vocabulary-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What does appropriation mean?" /><button className="secondary-button" type="submit" disabled={!question.trim()}>Ask</button></div>
-        {answer && <p role="status">{answer}</p>}
+        {answer && (
+          <div className="vocabulary-answer" role="status">
+            <strong>{answer.term}</strong>
+            <span>{answer.source} · {answer.confidence}</span>
+            <p>{answer.meaning}</p>
+            {answer.context && <blockquote>{answer.context}</blockquote>}
+            {answer.context && <button className="source-highlight-button" type="button" onClick={() => onShowSource(answer.context as string)}><LinkSimple size={12} />Show in article</button>}
+            {answer.note && <p>{answer.note}</p>}
+          </div>
+        )}
       </form>
     </section>
   );
@@ -366,6 +561,14 @@ function VocabularySection({ analysis, onShowSource }: { analysis: Analysis; onS
 function LanguagePanel({ analysis, onShowSource }: { analysis: Analysis; onShowSource: (text: string) => void }) {
   const signals = analysis.backendBias?.linguistic_evidence.signals || [];
   const localExamples = analysis.contentType === "article" ? analysis.loadedLanguageExamples : [];
+  const signalConfidence = (dimension: (typeof signals)[number]["dimension"]) => {
+    const scores = analysis.backendBias?.scores;
+    if (!scores) return 0.35;
+    if (dimension === "gender") return scores.gender_bias.confidence;
+    if (dimension === "ethnicity") return scores.ethnicity_bias.confidence;
+    if (dimension === "class") return scores.class_bias.confidence;
+    return scores.political_bias.confidence;
+  };
   return (
     <div className="analysis-panel language-panel">
       <p className="panel-intro">These exact passages may shape how the subject is read. They are prompts for context, not factuality ratings.</p>
@@ -377,6 +580,7 @@ function LanguagePanel({ analysis, onShowSource }: { analysis: Analysis; onShowS
               <p>{signal.explanation}</p>
               <blockquote>{signal.context}</blockquote>
               <button className="source-highlight-button" type="button" onClick={() => onShowSource(signal.context)}><LinkSimple size={12} />Show in article</button>
+              <DetectionFeedbackControl target={signalFeedbackTarget(signal, signalConfidence(signal.dimension))} />
             </li>
           ))}
         </ul>
@@ -388,6 +592,15 @@ function LanguagePanel({ analysis, onShowSource }: { analysis: Analysis; onShowS
               <p>{item.text}</p>
               <blockquote>{item.context}</blockquote>
               <button className="source-highlight-button" type="button" onClick={() => onShowSource(item.context)}><LinkSimple size={12} />Show in article</button>
+              <DetectionFeedbackControl target={{
+                excerpt: item.phrase,
+                context: item.context,
+                modelLabel: "loaded_language",
+                modelExplanation: item.text,
+                modelConfidence: item.confidenceScore,
+                detectionType: item.phrase.trim().split(/\s+/).length === 1 ? "word" : "phrase",
+                correctionOptions: ["loaded_language", "epistemic_framing", "persuasion", "stereotype_association", "neutral_not_biased"]
+              }} />
             </li>
           ))}
         </ul>
@@ -424,6 +637,7 @@ function SourcesAndVoicesPanel({ analysis, onShowSource }: { analysis: Analysis;
                         <div className="source-voice-passage" key={`${evidence.blockId}-${evidence.sentenceIndex}-${index}`}>
                           <blockquote>{evidence.evidenceText}</blockquote>
                           <button className="source-highlight-button" type="button" onClick={() => onShowSource(evidence.evidenceText)}><LinkSimple size={12} />View in article</button>
+                          <DetectionFeedbackControl target={perspectiveFeedbackTarget(source, evidence)} />
                         </div>
                       ))}
                     </div>
@@ -436,6 +650,55 @@ function SourcesAndVoicesPanel({ analysis, onShowSource }: { analysis: Analysis;
         {analysis.sourceSummary && <p className="source-list-summary">{analysis.sourceSummary}</p>}
       </section>
     </div>
+  );
+}
+
+function ScoreMethodCard({ analysis }: { analysis: Analysis }) {
+  const info = scoreSourceInfo(analysis);
+  return (
+    <section className="prototype-section score-method-card">
+      <div className="prototype-heading-row">
+        <span className="prototype-label">Score method</span>
+        <span>{info.label}</span>
+      </div>
+      <p>{info.detail}</p>
+      <p>{info.models}</p>
+    </section>
+  );
+}
+
+function OutletCoverageCard({ analysis }: { analysis: Analysis }) {
+  const coverage = analysis.outletCoverage;
+  if (!coverage || coverage.status === "unavailable") return null;
+  const isSitemapEstimate = coverage.method.includes("sitemap");
+  const headline = coverage.percentage === null
+    ? `${coverage.relatedCount} related pieces found in the sample`
+    : `${coverage.relatedCount} of ${coverage.sampledArticleCount} ${isSitemapEstimate ? "recent outlet pieces" : "sampled pieces"} (${coverage.percentage}%) looked related`;
+  const scope = isSitemapEstimate
+    ? `Past ${coverage.windowDays} days`
+    : coverage.status === "estimated"
+      ? "Recent feed sample"
+      : "Limited page sample";
+  return (
+    <section className="prototype-section outlet-coverage">
+      <div className="prototype-heading-row">
+        <span className="prototype-label">Outlet coverage estimate</span>
+        <span>{scope}</span>
+      </div>
+      <p className="coverage-headline">{headline}</p>
+      <p className="coverage-detail">Topic terms: {coverage.topicTerms.length ? coverage.topicTerms.join(", ") : coverage.topicLabel}</p>
+      <p className="coverage-note">{coverage.note}</p>
+      {coverage.sampledUrls.length > 0 && (
+        <details className="minor-disclosure">
+          <summary>Related sampled links</summary>
+          <ul className="coverage-links">
+            {coverage.sampledUrls.map((url) => (
+              <li key={url}><a href={url} target="_blank" rel="noreferrer">{new URL(url).pathname.replace(/\/$/, "") || url}</a></li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
   );
 }
 
@@ -475,6 +738,9 @@ function SourcesPanel({ analysis, trace, onShowSource }: { analysis: Analysis; t
         <p className="source-context-copy">{sourceContext(analysis)}</p>
         {/^(https?):\/\//.test(analysis.url) && <a className="source-context-link" href={analysis.url} target="_blank" rel="noreferrer"><LinkSimple size={14} />Open source</a>}
       </section>
+      <ScoreMethodCard analysis={analysis} />
+      <OutletCoverageCard analysis={analysis} />
+      <FeedbackEvaluationPanel />
       <section className="prototype-section">
         <div className="prototype-heading-row"><span className="prototype-label">Cited claims</span>{analysis.aiAnalysis && <span>{analysis.aiAnalysis.researchSourceCount || 0} research sources</span>}</div>
         <ResearchClaims analysis={analysis} onShowSource={onShowSource} />
@@ -483,7 +749,6 @@ function SourcesPanel({ analysis, trace, onShowSource }: { analysis: Analysis; t
         <AiDetailsDisclosure analysis={analysis} trace={trace} />
         {analysis.contentType === "bill" && <details className="disclosure"><summary>Bill details</summary><div className="disclosure-body"><SourceBreakdown analysis={analysis} /></div></details>}
         <details className="disclosure"><summary>All evidence ({analysis.evidence.length})</summary><div className="disclosure-body"><EvidenceList analysis={analysis} /></div></details>
-        <FeedbackDisclosure analysis={analysis} />
       </section>
     </div>
   );
@@ -528,6 +793,7 @@ function AnalysisView({
   }
 
   return (
+    <FeedbackProvider analysis={analysis}>
     <div className="result-stack prototype-result">
       <section className="source-reference">
         <div>
@@ -566,6 +832,7 @@ function AnalysisView({
       </section>
       <footer className="analysis-disclaimer">Ellipsis shows how this {analysis.contentType} is framed and which claims have supporting evidence. AI-assisted results may be incomplete.</footer>
     </div>
+    </FeedbackProvider>
   );
 }
 
@@ -647,68 +914,6 @@ function EvidenceList({ analysis }: { analysis: Analysis }) {
         );
       })}
     </div>
-  );
-}
-
-function FeedbackDisclosure({ analysis }: { analysis: Analysis }) {
-  const [selected, setSelected] = useState<FeedbackType | null>(null);
-  const [comment, setComment] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
-
-  useEffect(() => { setSelected(null); setComment(""); setStatus(null); }, [analysis.id]);
-
-  async function submitFeedback() {
-    if (!selected) return;
-    try {
-      await logFeedback({
-        id: `feedback_${Date.now().toString(36)}`,
-        analysisId: analysis.id,
-        url: analysis.url,
-        contentType: analysis.contentType,
-        feedbackType: selected,
-        optionalComment: comment.trim(),
-        confidenceScore: analysis.confidenceScore,
-        createdAt: new Date().toISOString()
-      });
-      setSelected(null);
-      setComment("");
-      setStatus("Feedback saved on this device.");
-    } catch {
-      setStatus("Feedback could not be saved.");
-    }
-  }
-
-  async function clearFeedback() {
-    if (!window.confirm("Delete all feedback saved on this device?")) return;
-    try {
-      await clearFeedbackLogs();
-      setStatus("Local feedback cleared.");
-    } catch {
-      setStatus("Local feedback could not be cleared.");
-    }
-  }
-
-  return (
-    <details className="disclosure">
-      <summary>Report a problem</summary>
-      <div className="disclosure-body">
-        <p className="helper">This remains on your device and is not sent to the team yet. Do not include personal information.</p>
-        {status && <div className="notice-panel" role="status">{status}</div>}
-        <div className="feedback-grid">
-          {feedbackTypes.map((type) => (
-            <button className={`choice-button ${selected === type ? "is-selected" : ""}`} type="button" aria-pressed={selected === type} key={type} onClick={() => { setSelected(type); setStatus(null); }}>{type}</button>
-          ))}
-        </div>
-        <div className="field">
-          <label htmlFor="feedback-comment">Optional comment</label>
-          <textarea id="feedback-comment" maxLength={1000} value={comment} onChange={(event) => setComment(event.target.value)} />
-        </div>
-        <div className="actions">
-          <button className="primary-button" type="button" disabled={!selected} onClick={submitFeedback}>Save locally</button>
-          <button className="secondary-button" type="button" onClick={clearFeedback}>Clear feedback</button>
-        </div>
-      </div>
-    </details>
   );
 }
 

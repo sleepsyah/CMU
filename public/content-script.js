@@ -11,7 +11,7 @@ function cleanInline(value) {
 }
 
 function normalizeForSearch(value) {
-  return cleanInline(value).toLowerCase();
+  return normalizedIndexMap(String(value || "")).normalized;
 }
 
 function countWords(text) {
@@ -87,7 +87,7 @@ function collectReadableBlocks(root) {
   const cloned = root.cloneNode(true);
   cloned
     .querySelectorAll(
-      "script, style, nav, footer, header, aside, form, button, iframe, noscript, svg, canvas, picture, video, [hidden], [aria-hidden='true'], [role='navigation']"
+      "script, style, nav, footer, header, aside, form, button, iframe, noscript, svg, canvas, picture, video, figcaption, [hidden], [aria-hidden='true'], [role='navigation'], [role='complementary'], [aria-label*='advertisement' i], [data-testid*='advertisement' i], [data-testid*='related' i], [class*='newsletter' i], [class*='recommended' i], [class*='related-content' i], [class*='promo' i]"
     )
     .forEach((node) => node.remove());
 
@@ -119,7 +119,9 @@ function scoreCandidate(element, text) {
   const sentences = countSentences(text);
   const paragraphs = text.split(/\n{2,}/).filter(Boolean).length;
   const densityPenalty = linkDensity(element, text) * 180;
-  return words + sentences * 35 + paragraphs * 18 - densityPenalty;
+  const semanticBonus = element.matches("article, [role='article'], [itemprop='articleBody'], [data-testid='article-body'], [data-testid='story-body']") ? 500 : 0;
+  const broadContainerPenalty = element === document.body ? words * 0.45 : element.tagName === "MAIN" ? words * 0.12 : 0;
+  return words + sentences * 35 + paragraphs * 18 + semanticBonus - densityPenalty - broadContainerPenalty;
 }
 
 function extractReadableText() {
@@ -211,7 +213,9 @@ function normalizedIndexMap(text) {
   const map = [];
   let inWhitespace = false;
   for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
+    const rawChar = text[index];
+    const char = canonicalSearchCharacter(rawChar);
+    if (!char) continue;
     if (/\s/.test(char)) {
       if (!inWhitespace && normalized.length > 0) {
         normalized += " ";
@@ -219,12 +223,47 @@ function normalizedIndexMap(text) {
       }
       inWhitespace = true;
     } else {
-      normalized += char.toLowerCase();
-      map.push(index);
+      const lowered = char.toLowerCase();
+      normalized += lowered;
+      for (let mappedIndex = 0; mappedIndex < lowered.length; mappedIndex += 1) map.push(index);
       inWhitespace = false;
     }
   }
   return { normalized: normalized.trim(), map };
+}
+
+function canonicalSearchCharacter(char) {
+  if (/[\u200B-\u200D\uFEFF]/.test(char)) return "";
+  if (/[\u2018\u2019\u201A\u201B\u2032\u00B4`]/.test(char)) return "'";
+  if (/[\u201C\u201D\u201E\u201F\u2033]/.test(char)) return '"';
+  if (/[\u2010-\u2015\u2212]/.test(char)) return "-";
+  if (char === "\u2026") return "...";
+  return char;
+}
+
+function wordSearchText(value) {
+  return normalizeForSearch(value)
+    .replace(/[^\p{L}\p{N}']+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function candidateMatchScore(candidateText, excerpt) {
+  const candidate = normalizeForSearch(candidateText);
+  const target = normalizeForSearch(excerpt);
+  if (!candidate || !target) return 0;
+  if (candidate.includes(target)) return 1000 + Math.min(target.length, 500);
+
+  const candidateWords = wordSearchText(candidateText);
+  const targetWords = wordSearchText(excerpt).split(" ").filter(Boolean);
+  if (targetWords.length < 4) return 0;
+  const largestWindow = Math.min(10, targetWords.length);
+  for (let size = largestWindow; size >= 4; size -= 1) {
+    for (let start = 0; start <= targetWords.length - size; start += 1) {
+      if (candidateWords.includes(targetWords.slice(start, start + size).join(" "))) return 100 + size;
+    }
+  }
+  return 0;
 }
 
 function rangeForRawOffsets(element, startOffset, endOffset) {
@@ -301,6 +340,26 @@ function removeTemporaryHighlights() {
   clearSourceHighlights();
 }
 
+function searchablePassageElements() {
+  const selector = [
+    "article p", "article li", "article blockquote",
+    "main p", "main li", "main blockquote",
+    "[itemprop='articleBody'] p", "[itemprop='articleBody'] blockquote",
+    "[data-testid*='paragraph' i]", "[data-testid*='story-text' i]",
+    "[data-component*='text-block' i]", "[class*='paragraph' i]",
+    "p", "li", "blockquote"
+  ].join(", ");
+  return Array.from(document.querySelectorAll(selector))
+    .filter((element) => isVisible(element) && cleanInline(element.textContent || "").length >= 12);
+}
+
+function rankedPassageCandidates(elements, excerpt) {
+  return elements
+    .map((element) => ({ element, score: candidateMatchScore(element.textContent || "", excerpt) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || (left.element.textContent || "").length - (right.element.textContent || "").length);
+}
+
 function highlightSourceText(excerpt) {
   ensureHighlightStyle();
   clearSourceHighlights();
@@ -309,43 +368,38 @@ function highlightSourceText(excerpt) {
   if (!target) return false;
   const relevantSentences = excerptSentences(excerpt, 3);
   const fullPassage = relevantSentences.join(" ");
-  const probes = [fullPassage, ...relevantSentences]
-    .map((sentence) => normalizeForSearch(sentence).slice(0, Math.min(normalizeForSearch(sentence).length, 90)))
-    .filter(Boolean);
+  const elements = searchablePassageElements();
 
-  const candidates = Array.from(document.querySelectorAll("article p, article li, article blockquote, main p, main li, main blockquote, p, li, blockquote"))
-    .filter((element) => {
-      const text = normalizeForSearch(element.textContent || "");
-      return isVisible(element) && probes.some((probe) => text.includes(probe));
-    });
-
-  for (const candidate of candidates) {
-    const mark = highlightWithinElement(candidate, fullPassage, false);
+  for (const { element } of rankedPassageCandidates(elements, fullPassage)) {
+    const mark = highlightWithinElement(element, fullPassage, false);
     if (!mark) continue;
     mark.scrollIntoView({ behavior: "smooth", block: "center" });
     window.setTimeout(removeTemporaryHighlights, 7000);
     return true;
   }
 
-  const sentenceMarks = [];
+  const passageMarks = [];
+  const highlightedElements = new Set();
   for (const sentence of relevantSentences) {
-    for (const candidate of candidates) {
-      const mark = highlightWithinElement(candidate, sentence, false);
+    const ranked = rankedPassageCandidates(elements, sentence);
+    let matched = false;
+    for (const { element } of ranked) {
+      const mark = highlightWithinElement(element, sentence, false);
       if (!mark) continue;
-      sentenceMarks.push(mark);
+      passageMarks.push(mark);
+      highlightedElements.add(element);
+      matched = true;
       break;
     }
+    if (matched) continue;
+    const fallbackElement = ranked[0]?.element;
+    if (fallbackElement && !highlightedElements.has(fallbackElement)) {
+      passageMarks.push(highlightWholeElement(fallbackElement));
+      highlightedElements.add(fallbackElement);
+    }
   }
-  if (sentenceMarks.length) {
-    sentenceMarks[0].scrollIntoView({ behavior: "smooth", block: "center" });
-    window.setTimeout(removeTemporaryHighlights, 7000);
-    return true;
-  }
-
-  const fallbackElement = candidates[0];
-  if (fallbackElement) {
-    highlightWholeElement(fallbackElement);
-    fallbackElement.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (passageMarks.length) {
+    passageMarks[0].scrollIntoView({ behavior: "smooth", block: "center" });
     window.setTimeout(removeTemporaryHighlights, 7000);
     return true;
   }

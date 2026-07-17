@@ -115,7 +115,7 @@ export async function enhanceAnalysisWithAi(
   supportingAssessment?: BackendBiasAnalysis
 ): Promise<Analysis> {
   const readableText = cleanReadableSourceText(page.text);
-  const payload = await nativeRequest<AiPayload>("analyze", provider, {
+  const rawPayload = await nativeRequest<unknown>("analyze", provider, {
     title: analysis.pageTitle,
     source_name: analysis.sourceName,
     content_type: analysis.contentType,
@@ -123,7 +123,8 @@ export async function enhanceAnalysisWithAi(
     raw_text: readableText,
     local_model_context: supportingAssessment ? modelSupportForAi(supportingAssessment) : undefined
   });
-  if (!isAiPayload(payload)) throw new Error(`${providerLabel(provider)} returned an invalid analysis shape.`);
+  const payload = normalizeAiPayload(rawPayload, analysis);
+  if (!payload) throw new Error(`${providerLabel(provider)} did not return a usable structured analysis. The local result is still available.`);
   return applyAiPayload(analysis, readableText, payload, provider, supportingAssessment);
 }
 
@@ -214,6 +215,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
 
   const aiFindings = payload.findings
     .map((item): (AnalysisFinding & { section: AiPayload["findings"][number]["section"] }) | null => {
+      if (!["main_issue", "review_question", "proposed_change", "affected_group", "sourced_supporter", "sourced_opponent", "unclear_impact"].includes(item.section)) return null;
       const text = bounded(item.text, 220);
       if (!text) return null;
       if (item.section === "review_question") return { ...analysisQuestion(evidence, text), section: item.section };
@@ -245,6 +247,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
   const factChecks = payload.fact_checks
     .map((item): FactCheck | null => {
       if (!["supported", "contradicted", "unresolved", "context_needed"].includes(item.assessment)) return null;
+      if (!Array.isArray(item.citations)) return null;
       const sourceQuote = matchedSourceQuote(sourceText, item.source_quote);
       if (!sourceQuote) return null;
       const citations = item.citations
@@ -454,23 +457,76 @@ function matchedSourceQuote(sourceText: string, candidate: string) {
   return normalized(sourceText).includes(normalized(quote)) ? quote : null;
 }
 
-function isAiPayload(value: AiPayload) {
-  return Boolean(
-    value && typeof value.summary === "string" &&
-    Array.isArray(value.summary_evidence) &&
-    typeof value.genre === "string" &&
-    Number.isFinite(value.overall_bias?.score) &&
-    ["minimal", "low", "moderate", "high"].includes(value.overall_bias?.level) &&
-    typeof value.overall_bias?.summary === "string" &&
-    Number.isFinite(value.confidence_score) &&
-    typeof value.confidence_reason === "string" &&
-    Array.isArray(value.frames) &&
-    Array.isArray(value.signals) &&
-    Array.isArray(value.review_questions) &&
-    Array.isArray(value.findings) &&
-    Array.isArray(value.important_terms) &&
-    Array.isArray(value.fact_checks)
-  );
+function objectItems(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
+}
+
+function stringItems(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function biasLevelFor(score: number): AiPayload["overall_bias"]["level"] {
+  if (score < 20) return "minimal";
+  if (score < 40) return "low";
+  if (score < 70) return "moderate";
+  return "high";
+}
+
+function normalizeAiPayload(value: unknown, analysis: Analysis): AiPayload | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const hasUsableContent = typeof input.summary === "string" || ["frames", "signals", "findings", "fact_checks"].some((key) => Array.isArray(input[key]));
+  if (!hasUsableContent) return null;
+
+  const overallInput = input.overall_bias && typeof input.overall_bias === "object"
+    ? input.overall_bias as Record<string, unknown>
+    : {};
+  const fallbackScore = analysis.biasProfile?.score ?? 0;
+  const score = Number.isFinite(overallInput.score) ? clamp(Math.round(overallInput.score as number), 0, 100) : fallbackScore;
+  const suppliedLevel = overallInput.level;
+  const level = ["minimal", "low", "moderate", "high"].includes(String(suppliedLevel))
+    ? suppliedLevel as AiPayload["overall_bias"]["level"]
+    : biasLevelFor(score);
+  const fallbackGenre = analysis.contentType === "article" ? analysis.genre : "general";
+  const suppliedGenre = String(input.genre || "");
+  const genre = ["event", "opinion", "data_report", "explainer", "investigation", "general"].includes(suppliedGenre)
+    ? suppliedGenre as ArticleGenre
+    : fallbackGenre;
+  const confidence = Number.isFinite(input.confidence_score)
+    ? clamp(Math.round(input.confidence_score as number), 0, 100)
+    : analysis.confidenceScore;
+  const traceInput = input._trace && typeof input._trace === "object" ? input._trace as Record<string, unknown> : null;
+
+  return {
+    summary: typeof input.summary === "string" && input.summary.trim() ? input.summary : analysis.summary,
+    summary_evidence: stringItems(input.summary_evidence),
+    genre,
+    overall_bias: {
+      score,
+      level,
+      summary: typeof overallInput.summary === "string" && overallInput.summary.trim()
+        ? overallInput.summary
+        : analysis.biasProfile?.summary || "The AI response did not supply a separate overall framing explanation."
+    },
+    confidence_score: confidence,
+    confidence_reason: typeof input.confidence_reason === "string" && input.confidence_reason.trim()
+      ? input.confidence_reason
+      : "Some optional AI response fields were missing, so Ellipsis retained the local evidence confidence.",
+    frames: objectItems(input.frames) as unknown as AiPayload["frames"],
+    signals: objectItems(input.signals) as unknown as AiPayload["signals"],
+    review_questions: stringItems(input.review_questions),
+    findings: objectItems(input.findings) as unknown as AiPayload["findings"],
+    important_terms: objectItems(input.important_terms) as unknown as AiPayload["important_terms"],
+    fact_checks: objectItems(input.fact_checks) as unknown as AiPayload["fact_checks"],
+    ...(traceInput ? {
+      _trace: {
+        reasoning_summaries: stringItems(traceInput.reasoning_summaries),
+        runtime_ms: Number.isFinite(traceInput.runtime_ms) ? Math.max(0, traceInput.runtime_ms as number) : 0,
+        usage: traceInput.usage && typeof traceInput.usage === "object" ? traceInput.usage as NonNullable<AiPayload["_trace"]>["usage"] : null,
+        web_search_queries: stringItems(traceInput.web_search_queries)
+      }
+    } : {})
+  };
 }
 
 export function aiProviderLabel(provider: AiProvider) {

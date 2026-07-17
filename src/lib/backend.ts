@@ -1,5 +1,6 @@
 import { analyzePage, cleanReadableSourceText, confidenceLabel } from "./analysis";
 import { aiProviderLabel, enhanceAnalysisWithAi } from "./ai";
+import { estimateOutletCoverage } from "./coverage";
 import type {
   AiSettings,
   Analysis,
@@ -10,7 +11,8 @@ import type {
   BiasMetric,
   BiasSignal,
   EvidenceItem,
-  ExtractedPage
+  ExtractedPage,
+  OutletCoverageEstimate
 } from "../types";
 
 const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim() || "http://127.0.0.1:8000";
@@ -158,6 +160,12 @@ interface AnalysisOptions {
   onProgress?: (event: AnalysisTraceEvent) => void;
 }
 
+interface NativeBackendStatus {
+  backendUrl?: string;
+  ready?: boolean;
+  status?: string;
+}
+
 function trace(options: AnalysisOptions, event: Omit<AnalysisTraceEvent, "runId" | "at">) {
   options.onProgress?.({
     ...event,
@@ -172,33 +180,20 @@ export async function analyzePageWithBackend(page: ExtractedPage, options: Analy
   const readableText = cleanReadableSourceText(page.text);
   trace(options, { id: "gather-source", kind: "local", status: "completed", title: "Gather source text", detail: `${readableText.length.toLocaleString()} characters ready`, durationMs: Date.now() - sourceStartedAt });
   const localAnalysis = analyzePage(page);
+  const outletCoveragePromise = outletCoverageFor(page, localAnalysis, options);
   const localAssessment = localBiasAssessment(readableText);
-  let fallbackAssessment = localAssessment;
+  const supportingAssessment = await modelSupportedAssessment(localAssessment, readableText, options);
+  let fallbackAssessment = supportingAssessment;
   const aiEnabled = options.aiSettings?.enabled ?? options.aiEnabled ?? false;
   let aiFailureReason: string | undefined;
   if (aiEnabled) {
     const provider = options.aiSettings?.provider || "codex";
     const providerName = aiProviderLabel(provider);
-    const localBackendUrl = isLoopbackBackendUrl(configuredBackendUrl) ? configuredBackendUrl : "";
-    let supportingAssessment = localAssessment;
-    trace(options, { id: "local-model-support", kind: "local", status: "running", title: "Local model support", detail: "Checking for the optional local model helper" });
-    if (localBackendUrl && await backendIsReady(localBackendUrl)) {
-      try {
-        const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
-        supportingAssessment = mergeWithLocalBackend(localAssessment, backendPayload, readableText);
-        fallbackAssessment = supportingAssessment;
-        trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: `Evidence-linked model signals are ready for ${providerName}` });
-      } catch {
-        trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: `Local helper did not complete; ${providerName} will continue without it` });
-      }
-    } else {
-      trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: `Optional helper is not running; ${providerName} will continue without it` });
-    }
     const supportedAnalysis = attachBiasAssessment(localAnalysis, supportingAssessment);
     try {
       const completed = await enhanceAnalysisWithAi(supportedAnalysis, page, provider, options.traceId, supportingAssessment);
       trace(options, { id: "ai-analysis", kind: "runtime", status: "completed", title: `${providerName} analysis`, detail: `${completed.aiAnalysis?.factChecks?.length || 0} researched checks, ${completed.aiAnalysis?.addedSignalCount || 0} bias cues, ${completed.aiAnalysis?.addedFrameCount || 0} frames` });
-      return completed;
+      return attachOutletCoverage(completed, await outletCoveragePromise);
     } catch (error) {
       aiFailureReason = error instanceof Error ? error.message : "AI deep analysis did not complete.";
       trace(options, { id: "ai-analysis", kind: "runtime", status: "failed", title: `${providerName} analysis`, detail: aiFailureReason });
@@ -206,7 +201,84 @@ export async function analyzePageWithBackend(page: ExtractedPage, options: Analy
   }
 
   const analysis = attachBiasAssessment(localAnalysis, fallbackAssessment);
-  return aiFailureReason ? { ...analysis, aiFailureReason } as Analysis : analysis;
+  const withCoverage = attachOutletCoverage(analysis, await outletCoveragePromise);
+  return aiFailureReason ? { ...withCoverage, aiFailureReason } as Analysis : withCoverage;
+}
+
+async function outletCoverageFor(page: ExtractedPage, analysis: Analysis, options: AnalysisOptions): Promise<OutletCoverageEstimate | undefined> {
+  if (analysis.contentType !== "article") return undefined;
+  const startedAt = Date.now();
+  trace(options, { id: "outlet-coverage", kind: "local", status: "running", title: "Outlet coverage estimate", detail: "Sampling recent same-outlet coverage" });
+  try {
+    const estimate = await estimateOutletCoverage(page, analysis);
+    trace(options, {
+      id: "outlet-coverage",
+      kind: "local",
+      status: "completed",
+      title: "Outlet coverage estimate",
+      detail: estimate?.status === "estimated"
+        ? `${estimate.relatedCount} of ${estimate.sampledArticleCount} sampled recent pieces looked related`
+        : estimate?.status === "limited"
+          ? "Only a limited same-page outlet sample was available"
+          : "No usable outlet coverage sample was available",
+      durationMs: Date.now() - startedAt
+    });
+    return estimate;
+  } catch (error) {
+    trace(options, { id: "outlet-coverage", kind: "local", status: "completed", title: "Outlet coverage estimate", detail: error instanceof Error ? error.message : "Coverage estimate unavailable", durationMs: Date.now() - startedAt });
+    return undefined;
+  }
+}
+
+function attachOutletCoverage(analysis: Analysis, outletCoverage: OutletCoverageEstimate | undefined): Analysis {
+  return outletCoverage ? { ...analysis, outletCoverage } as Analysis : analysis;
+}
+
+async function modelSupportedAssessment(localAssessment: BackendBiasAnalysis, readableText: string, options: AnalysisOptions): Promise<BackendBiasAnalysis> {
+  const localBackendUrl = isLoopbackBackendUrl(configuredBackendUrl) ? configuredBackendUrl : "";
+  if (!localBackendUrl) return localAssessment;
+
+  const startedAt = Date.now();
+  trace(options, { id: "local-model-support", kind: "local", status: "running", title: "Local model support", detail: "Checking local Python model helper" });
+  try {
+    let ready = await backendIsReady(localBackendUrl);
+    if (!ready) {
+      const nativeStatus = await ensureBackendViaNativeHost(options);
+      ready = Boolean(nativeStatus?.ready) || await backendIsReady(localBackendUrl);
+    }
+    if (!ready) throw new Error("Local model helper is not ready.");
+    const backendPayload = await fetchBackendBias(localBackendUrl, readableText);
+    trace(options, { id: "local-model-support", kind: "local", status: "completed", title: "Local model support", detail: "Python transformer model signals merged", durationMs: Date.now() - startedAt });
+    return mergeWithLocalBackend(localAssessment, backendPayload, readableText);
+  } catch (error) {
+    trace(options, {
+      id: "local-model-support",
+      kind: "local",
+      status: "completed",
+      title: "Local model support",
+      detail: error instanceof Error ? error.message : "Local model helper was unavailable",
+      durationMs: Date.now() - startedAt
+    });
+    return localAssessment;
+  }
+}
+
+async function ensureBackendViaNativeHost(options: AnalysisOptions): Promise<NativeBackendStatus | null> {
+  if (typeof chrome === "undefined" || !chrome.runtime?.id) return null;
+  const request = chrome.runtime.sendMessage({
+    type: "ellipsis.ai.request",
+    action: "ensure_backend",
+    payload: { trace_id: options.traceId }
+  }) as Promise<{ ok?: boolean; result?: NativeBackendStatus }>;
+  try {
+    const response = await Promise.race([
+      request,
+      new Promise<null>((resolve) => globalThis.setTimeout(() => resolve(null), BACKEND_TIMEOUT_MS))
+    ]);
+    return response && "ok" in response && response.ok ? response.result || null : null;
+  } catch {
+    return null;
+  }
 }
 
 export function isLoopbackBackendUrl(value: string) {

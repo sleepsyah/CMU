@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { BackendBiasAnalysis, BiasProfile, BiasSignal, FrameSignal } from "../../types";
 import AnimatedContent from "../reactbits/AnimatedContent";
 import CountUp from "../reactbits/CountUp";
+import { DetectionFeedbackControl, indicatorFeedbackTarget, signalFeedbackTarget } from "./DetectionFeedback";
 
 function tone(score: number | null) {
   if (score === null) return "neutral";
@@ -30,6 +31,14 @@ function conciseSentence(value: string) {
   return firstSentence.length <= 130 ? firstSentence : `${firstSentence.slice(0, 127).trimEnd()}...`;
 }
 
+function assessmentSourceLabel(source: BackendBiasAnalysis["source"]) {
+  if (source === "hybrid-backend") return "Python model backend";
+  if (source === "codex-enhanced") return "Codex AI";
+  if (source === "ai-enhanced") return "Claude AI";
+  if (source === "local-fallback") return "Heuristic fallback";
+  return "Local heuristics";
+}
+
 export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysis }) {
   const rows = [
     { label: "Political", dimension: "political" as const, metric: assessment.scores.political_bias },
@@ -41,13 +50,17 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
 
   return (
     <AnimatedContent className="signal-chart" distance={5}>
+      <div className="score-source-banner">
+        <span>Score source</span>
+        <strong>{assessmentSourceLabel(assessment.source)}</strong>
+      </div>
       {rows.map(({ label, dimension, metric }, index) => {
         const score = metric.status === "assessed" && metric.score !== null ? Math.round(metric.score) : null;
         const signals = assessment.linguistic_evidence.signals.filter((signal) => signal.dimension === dimension);
         if (score === null || !signals.length) {
           return (
             <div className="signal-chart-row is-empty" key={label}>
-              <div className="signal-chart-label"><span>{label}</span></div>
+              <div className="signal-chart-label"><span>{label}</span><span>{assessmentSourceLabel(assessment.source)}</span></div>
               <span className="signal-no-evidence">Not enough evidence</span>
             </div>
           );
@@ -56,7 +69,7 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
         return (
           <details className="signal-disclosure" key={label}>
             <summary className="signal-chart-row">
-              <div className="signal-chart-label"><span>{label}</span><span>{evidence}</span></div>
+              <div className="signal-chart-label"><span>{label}</span><span>{assessmentSourceLabel(assessment.source)} · {evidence}</span></div>
               <div className={`signal-track is-${tone(score)}`} aria-hidden="true">
                 <motion.span
                   className="signal-fill"
@@ -76,9 +89,11 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
                   <li key={signal.id}>
                     <blockquote>{signal.context}</blockquote>
                     <p><strong>{categoryLabel(signal.category)} · {severityLabel(signal.severity)}</strong> {conciseSentence(signal.explanation)}</p>
+                    <DetectionFeedbackControl target={signalFeedbackTarget(signal, metric.confidence)} />
                   </li>
                 ))}
               </ul>
+              <DetectionFeedbackControl target={indicatorFeedbackTarget(dimension, label, metric, signals)} />
             </div>
           </details>
         );
