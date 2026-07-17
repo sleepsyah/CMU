@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { longLiveBlogFixture, sourceExcerpts } from "./fixtures/sources-and-voices-excerpts";
-import { extractSourcesAndVoices, sourceRoleLabel } from "./sources";
+import { extractSourcesAndVoices, sourceRoleLabel, validateSourceDisplayName } from "./sources";
 
 describe("Sources and Voices extraction", () => {
   it("includes only explicitly attributed sources and keeps exact evidence", () => {
@@ -90,6 +90,51 @@ describe("Sources and Voices extraction", () => {
       sourceExcerpts.cbsAttributiveReportingVerb
     ].join(" "));
     expect(result.sources).toEqual([]);
+  });
+
+  it("binds a reporting verb to its local subordinate-clause subject", () => {
+    const result = extractSourcesAndVoices("In December, Alina Habba resigned as the top federal prosecutor for New Jersey after an appeals court said she had been serving in the post unlawfully.");
+    expect(result.sources.map((source) => source.displayName)).not.toContain("Alina Habba");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]).toMatchObject({
+      displayName: "an appeals court",
+      contributionSummary: "Stated that she had been serving in the post unlawfully."
+    });
+  });
+
+  it("does not mistake a non-finite modifier inside a relative clause for a source", () => {
+    const result = extractSourcesAndVoices("Rogoff, who spent 20 years as a state prosecutor and six as a federal prosecutor before becoming a state judge, said he knew the administration might fire him immediately.");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]).toMatchObject({
+      displayName: "Rogoff",
+      contributionSummary: "Stated that he knew the administration might fire him immediately."
+    });
+    expect(result.sources.map((source) => source.displayName)).not.toContain("becoming a state judge");
+  });
+
+  it("ignores non-finite boundary phrases while retaining the sentence subject", () => {
+    const results = [
+      extractSourcesAndVoices("Jordan Lee, after serving as counsel, said the agency should publish its records."),
+      extractSourcesAndVoices("Before becoming governor, Jane Smith said she had worked as an attorney.")
+    ];
+    expect(results[0].sources[0]?.displayName).toBe("Jordan Lee");
+    expect(results[1].sources[0]?.displayName).toBe("Jane Smith");
+  });
+
+  it("does not promote a main-clause subject when a nested source reports the claim", () => {
+    const result = extractSourcesAndVoices([
+      "Mayor Smith left the meeting after Jordan Lee said the proposal lacked enough votes.",
+      "The agency changed its rules because auditors reported that several records were incomplete.",
+      "Jordan Lee endorsed the first proposal, but the committee said a second vote was necessary."
+    ].join(" "));
+    expect(result.sources.map((source) => source.displayName)).toEqual(expect.arrayContaining(["Jordan Lee", "auditors", "committee"]));
+    expect(result.sources.map((source) => source.displayName)).not.toEqual(expect.arrayContaining(["Mayor Smith", "The agency"]));
+  });
+
+  it("rejects clauses masquerading as source names while preserving explicit attribution", () => {
+    expect(validateSourceDisplayName("Alina Habba resigned as the top federal prosecutor", "Alina Habba resigned after a court said the appointment was unlawful.").name).toBeNull();
+    expect(extractSourcesAndVoices("Alina Habba said the appointment process was lawful.").sources[0]?.displayName).toBe("Alina Habba");
+    expect(extractSourcesAndVoices("Local housing advocates said the proposal would reduce rents.").sources[0]?.displayName).toBe("Local housing advocates");
   });
 
   it("preserves a supported long institutional name", () => {
