@@ -144,6 +144,7 @@ export function enhanceAnalysisWithCodex(analysis: Analysis, page: ExtractedPage
 
 function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPayload, provider: AiProvider, supportingAssessment?: BackendBiasAnalysis): Analysis {
   const providerName = providerLabel(provider);
+  const completedSummary = completeSummary(payload.summary, 500) || analysis.summary;
   const evidence: EvidenceItem[] = [];
   const summaryEvidenceIds = payload.summary_evidence
     .map((quote) => matchedSourceQuote(sourceText, quote))
@@ -305,10 +306,10 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     outsideContextCount: 0,
     reasoningSummaryCount: payload._trace?.reasoning_summaries?.length || 0,
     runtimeMs: Math.max(0, Math.round(payload._trace?.runtime_ms || 0)),
-    summaryRefined: summaryEvidenceIds.length > 0 && normalized(payload.summary) !== normalized(analysis.summary),
+    summaryRefined: summaryEvidenceIds.length > 0 && normalized(completedSummary) !== normalized(analysis.summary),
     webSearchCount: payload._trace?.web_search_queries?.length || 0,
     localModelSupport: supportingAssessment?.source === "hybrid-backend",
-    outputSummary: bounded(payload.summary, 500),
+    outputSummary: completedSummary,
     factChecks,
     researchSourceCount: new Set(factChecks.flatMap((item) => item.citations.map((citation) => citation.url))).size,
     reasoningSummaries: payload._trace?.reasoning_summaries?.slice(0, 4) || [],
@@ -317,7 +318,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
   };
 
   const sharedUpdates = {
-    summary: bounded(payload.summary, 500),
+    summary: completedSummary,
     summaryEvidenceIds,
     confidenceScore,
     confidenceReason,
@@ -370,7 +371,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     ...analysis,
     ...sharedUpdates,
     mainIssue,
-    plainLanguageSummary: bounded(payload.summary, 500),
+    plainLanguageSummary: completedSummary,
     proposedChanges: aiFindings.filter((item) => item.section === "proposed_change").slice(0, 7),
     affectedGroups: aiFindings.filter((item) => item.section === "affected_group").slice(0, 7),
     sourcedSupporters: aiFindings.filter((item) => item.section === "sourced_supporter").slice(0, 6),
@@ -600,6 +601,21 @@ function normalized(value: string) {
 function bounded(value: string, max: number) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length <= max ? text : `${text.slice(0, max - 3).trimEnd()}...`;
+}
+
+function completeSummary(value: string, preferredMax: number) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (text.length <= preferredMax && /[.!?]["'”’)]*$/.test(text)) return text;
+
+  const prefix = text.slice(0, preferredMax);
+  const boundaries = [...prefix.matchAll(/[.!?](?=["'”’)]*(?:\s+[A-Z0-9“"]|$))/g)];
+  const lastBoundary = boundaries.at(-1);
+  if (lastBoundary && lastBoundary.index !== undefined && lastBoundary.index >= 40) {
+    return prefix.slice(0, lastBoundary.index + 1).trim();
+  }
+
+  return /[.!?]["'”’)]*$/.test(text) ? text : "";
 }
 
 function makeId(prefix: string) {

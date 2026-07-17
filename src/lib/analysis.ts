@@ -126,7 +126,9 @@ export function cleanDisplayTitle(text: string) {
 function splitSentences(text: string) {
   return cleanReadableSourceText(text)
     .split(/\n{2,}/)
-    .flatMap((block) => normalizeWhitespace(block).split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/))
+    .flatMap((block) => normalizeWhitespace(block)
+      .split(/(?<=[.!?])(?=["“][A-Z0-9])/)
+      .flatMap((sentence) => sentence.split(/(?<=[.!?])\s+(?=[A-Z0-9"'“])/)))
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length > 24 && !MACHINE_SERIALIZATION.test(sentence) && !/\[[A-Za-z][^\]]{0,40}\]\s*=>/.test(sentence))
     .slice(0, 120);
@@ -248,7 +250,8 @@ function rankedSummarySentences(page: ExtractedPage, sentences: string[], count:
       const positionSignal = index === 0 ? 1.2 : Math.max(0, 0.65 - index * 0.07);
       const detailSignal = /\b(?:according to|announced|approved|directed|found|reported|would|will|could|because|after|before|result|investigation)\b/i.test(sentence) ? 0.45 : 0;
       const lengthPenalty = sentence.length < 55 ? 0.8 : sentence.length > 420 ? 0.5 : 0;
-      return { sentence, index, tokens: uniqueTokens, score: centrality + titleOverlap * 0.7 + positionSignal + detailSignal - lengthPenalty };
+      const quoteLeadPenalty = /^[\s“"]/.test(sentence) ? 3 : 0;
+      return { sentence, index, tokens: uniqueTokens, score: centrality + titleOverlap * 0.7 + positionSignal + detailSignal - lengthPenalty - quoteLeadPenalty };
     })
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
@@ -269,15 +272,31 @@ function rankedSummarySentences(page: ExtractedPage, sentences: string[], count:
 
 function conciseSummaryClause(sentence: string) {
   const normalized = normalizeWhitespace(sentence);
-  const naturalClause = normalized.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
-  if (naturalClause.length <= 240) return naturalClause.replace(/[,:;]$/, "");
-
-  const punctuation = Math.max(naturalClause.lastIndexOf(",", 240), naturalClause.lastIndexOf(";", 240));
-  return punctuation >= 100 ? naturalClause.slice(0, punctuation).trim() : naturalClause;
+  const withoutImageCredit = normalized.replace(/\s*\([^()]{0,100}(?:Getty Images|AP Photo|Reuters|AFP)[^()]*\)\.?$/i, "");
+  const withoutLeadingTransition = withoutImageCredit.replace(/^(?:But|And|Yet|However|Nevertheless|Nonetheless),?\s+/i, "");
+  const naturalClause = withoutLeadingTransition.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
+  return naturalClause.replace(/[,:;]$/, "");
 }
 
-function lowerSentenceLead(value: string) {
-  return /^[A-Z][a-z]/.test(value) ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+function standaloneSentenceLead(value: string) {
+  return /^[a-z]/.test(value) ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+}
+
+function standaloneQuote(value: string) {
+  const trimmed = value.trim();
+  if (!/[”"]$/.test(trimmed)) return trimmed;
+  if (/[,;:][”"]$/.test(trimmed)) return trimmed.replace(/[,;:]([”"])$/, ".$1");
+  if (!/[.!?][”"]$/.test(trimmed)) return trimmed.replace(/([”"])$/, ".$1");
+  return trimmed;
+}
+
+function quoteLedSummary(sentence: string) {
+  const normalized = normalizeWhitespace(sentence);
+  const attributed = normalized.match(/^([“"][\s\S]+?[”"])[,;:]?\s+(.+?)\s+(said|says|stated|added|wrote|testified|argued|explained|noted|announced)(\s+[^.!?]*)?[.!?]?$/i);
+  if (!attributed) return null;
+
+  const [, quote, speaker, verb, context = ""] = attributed;
+  return `${speaker} ${verb.toLowerCase()}${context}: ${standaloneQuote(quote)}`;
 }
 
 function confidenceFor(page: ExtractedPage, evidenceItems: EvidenceItem[]) {
@@ -310,10 +329,10 @@ function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sen
   );
   const clauses = summarySentences.map(conciseSummaryClause).filter(Boolean);
   const [first, ...rest] = clauses;
-  const lead = page.contentType === "bill" ? "The source explains that" : "The article reports that";
+  const lead = page.contentType === "bill" ? "The source explains" : "The article reports";
   const summary = [
-    `${lead} ${lowerSentenceLead(first).replace(/[.!?]+$/, "")}.`,
-    ...rest.map((clause) => `It also notes that ${lowerSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
+    quoteLedSummary(first) || `${lead}: ${standaloneSentenceLead(first).replace(/[.!?]+$/, "")}.`,
+    ...rest.map((clause) => quoteLedSummary(clause) || `It also notes: ${standaloneSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
   ].join(" ");
   return { summary, evidenceIds };
 }

@@ -104,11 +104,127 @@ describe("article analysis", () => {
     );
     if (analysis.contentType !== "article") throw new Error("Expected article analysis");
 
-    expect(analysis.summary).toMatch(/^The article reports that /);
+    expect(analysis.summary).toMatch(/^The article reports: /);
     expect(analysis.summary).not.toBe(`${opening} The review began after signal failures stranded thousands of riders during the morning commute.`);
     expect(analysis.summary).not.toContain("...");
     expect(analysis.summaryEvidenceIds).toHaveLength(2);
     expect(analysis.summaryEvidenceIds.every((id) => analysis.evidence.some((item) => item.id === id))).toBe(true);
+  });
+
+  it("does not place a quote-led attribution after an indirect-summary lead", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Blanche appears at confirmation hearing",
+        text: [
+          "“I am here today to earn your trust once more,” Blanche said at the top of his confirmation hearing.",
+          "During Blanche’s confirmation hearing Wednesday, several of Epstein’s accusers were seated in the Senate gallery."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).not.toContain("reports that “");
+    expect(analysis.summary).not.toContain("notes that “");
+    expect(analysis.summary).toContain("Blanche said at the top of his confirmation hearing: “I am here today to earn your trust once more.”");
+  });
+
+  it("prefers narrative reporting over quote-led sentences when enough alternatives exist", () => {
+    const quote = "“I am here today to earn your trust once more,” Blanche said at the top of his confirmation hearing.";
+    const analysis = analyzePage(
+      page({
+        title: "Blanche appears at confirmation hearing",
+        text: [
+          quote,
+          "Several accusers were seated in the Senate gallery during Blanche’s confirmation hearing Wednesday.",
+          "The committee will vote next week on whether to advance Blanche’s nomination to the full Senate."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    const summaryEvidence = analysis.summaryEvidenceIds.map((id) => analysis.evidence.find((item) => item.id === id)?.supportingText);
+    expect(summaryEvidence).not.toContain(quote);
+  });
+
+  it("preserves proper-name capitalization and separates an adjacent quotation", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Slotkin criticizes SAVE America Act",
+        text: [
+          "Elissa Slotkin, D-Mich., said the Safeguard American Voter Eligibility Act (SAVE) America Act would make it harder for Democrats to win elections. (Tom Williams/Getty Images).",
+          "The White House dismissed Slotkin's claims about SAVE America hurting Democrats.\"If securing America’s elections through commonsense methods like voter ID and proof of citizenship will make it impossible for Democrats to win elections."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("reports: Elissa Slotkin");
+    expect(analysis.summary).not.toContain("reports: elissa Slotkin");
+    expect(analysis.summary).toContain("notes: The White House dismissed");
+    expect(analysis.summary).not.toContain("Democrats.\"");
+    expect(analysis.summary).not.toContain("Getty Images");
+  });
+
+  it("preserves a single-word proper name at the start of a summary clause", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Debate over SAVE America Act",
+        text: [
+          "Elissa Slotkin said the SAVE America Act would make it harder for Democrats to win elections.",
+          "Trump argued for months that Democrats oppose the SAVE America Act because it would make it harder to \"cheat\" in elections."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("notes: Trump argued");
+    expect(analysis.summary).not.toContain("notes: trump argued");
+  });
+
+  it("removes a leading transition before attaching a summary clause", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Funding negotiations continue",
+        text: [
+          "Lawmakers continued negotiating over the funding proposal after Tuesday's committee hearing.",
+          "But since the two parties remain divided over the total cost, a final vote has not been scheduled."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("notes: Since the two parties remain divided");
+    expect(analysis.summary).not.toMatch(/(?:reports|notes): But\b/);
+  });
+
+  it("keeps a common noun capitalized after a standalone summary lead", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Chicago air quality alert remains in effect",
+        text: [
+          "CHICAGO (WLS) -- An Air Quality Alert remains in effect for the Chicago area Friday due to smoke from Canadian wildfires.",
+          "Air quality remained in the hazardous category for the Chicago area Friday morning."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("notes: Air quality remained");
+    expect(analysis.summary).not.toContain("notes that Air quality remained");
+  });
+
+  it("keeps a long local source sentence complete", () => {
+    const longSentence = `The committee described ${"several implementation details, ".repeat(9)}and a final requirement that agencies publish complete guidance before the policy takes effect.`;
+    const analysis = analyzePage(
+      page({
+        title: "Committee describes implementation requirements",
+        text: `${longSentence} Agencies will begin preparing the guidance next month.`
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(longSentence.length).toBeGreaterThan(240);
+    expect(analysis.summary).toContain("before the policy takes effect.");
   });
 
   it("keeps source extraction separate from genre classification", () => {
