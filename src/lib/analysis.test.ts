@@ -104,7 +104,7 @@ describe("article analysis", () => {
     );
     if (analysis.contentType !== "article") throw new Error("Expected article analysis");
 
-    expect(analysis.summary).toMatch(/^The article reports that /);
+    expect(analysis.summary).toMatch(/^The article reports: /);
     expect(analysis.summary).not.toBe(`${opening} The review began after signal failures stranded thousands of riders during the morning commute.`);
     expect(analysis.summary).not.toContain("...");
     expect(analysis.summaryEvidenceIds).toHaveLength(2);
@@ -158,9 +158,9 @@ describe("article analysis", () => {
     );
     if (analysis.contentType !== "article") throw new Error("Expected article analysis");
 
-    expect(analysis.summary).toContain("reports that Elissa Slotkin");
-    expect(analysis.summary).not.toContain("reports that elissa Slotkin");
-    expect(analysis.summary).toContain("notes that the White House dismissed");
+    expect(analysis.summary).toContain("reports: Elissa Slotkin");
+    expect(analysis.summary).not.toContain("reports: elissa Slotkin");
+    expect(analysis.summary).toContain("notes: The White House dismissed");
     expect(analysis.summary).not.toContain("Democrats.\"");
     expect(analysis.summary).not.toContain("Getty Images");
   });
@@ -177,8 +177,54 @@ describe("article analysis", () => {
     );
     if (analysis.contentType !== "article") throw new Error("Expected article analysis");
 
-    expect(analysis.summary).toContain("notes that Trump argued");
-    expect(analysis.summary).not.toContain("notes that trump argued");
+    expect(analysis.summary).toContain("notes: Trump argued");
+    expect(analysis.summary).not.toContain("notes: trump argued");
+  });
+
+  it("removes a leading transition before attaching a summary clause", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Funding negotiations continue",
+        text: [
+          "Lawmakers continued negotiating over the funding proposal after Tuesday's committee hearing.",
+          "But since the two parties remain divided over the total cost, a final vote has not been scheduled."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("notes: Since the two parties remain divided");
+    expect(analysis.summary).not.toMatch(/(?:reports|notes): But\b/);
+  });
+
+  it("keeps a common noun capitalized after a standalone summary lead", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Chicago air quality alert remains in effect",
+        text: [
+          "CHICAGO (WLS) -- An Air Quality Alert remains in effect for the Chicago area Friday due to smoke from Canadian wildfires.",
+          "Air quality remained in the hazardous category for the Chicago area Friday morning."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("notes: Air quality remained");
+    expect(analysis.summary).not.toContain("notes that Air quality remained");
+  });
+
+  it("keeps a long local source sentence complete", () => {
+    const longSentence = `The committee described ${"several implementation details, ".repeat(9)}and a final requirement that agencies publish complete guidance before the policy takes effect.`;
+    const analysis = analyzePage(
+      page({
+        title: "Committee describes implementation requirements",
+        text: `${longSentence} Agencies will begin preparing the guidance next month.`
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(longSentence.length).toBeGreaterThan(240);
+    expect(analysis.summary).toContain("before the policy takes effect.");
   });
 
   it("keeps source extraction separate from genre classification", () => {

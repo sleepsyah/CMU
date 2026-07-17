@@ -94,6 +94,13 @@ describe("native Codex connection", () => {
     expect(result.contentType === "article" && result.genre).toBe("event");
     expect(result.contentType === "article" && result.sourcesAndVoices[0].displayName).toBe("NASA");
 
+    const cutoffSummary = "The article reports that Sen. Elissa Slotkin said the SAVE America Act would make it harder for Democrats to win elections and frames Republican responses as accusing Democrats of opposing stricter election rules because they benefit from weak verification. It also describes the bill’s proof-of-citizenship and voter ID provisions, Slotkin’s concerns about married women, Trump’s cheating claims, and Fox News Digital’s";
+    expect(cutoffSummary).toHaveLength(420);
+    vi.stubGlobal("chrome", { runtime: { id: "extension", sendMessage: vi.fn().mockResolvedValue({ ok: true, result: { ...payload, summary: cutoffSummary } }) } });
+    const cutoffResult = await enhanceAnalysisWithCodex(analyzePage(page), page, "trace-cutoff");
+    expect(cutoffResult.summary).toBe("The article reports that Sen. Elissa Slotkin said the SAVE America Act would make it harder for Democrats to win elections and frames Republican responses as accusing Democrats of opposing stricter election rules because they benefit from weak verification.");
+    expect(cutoffResult.aiAnalysis?.outputSummary).toBe(cutoffResult.summary);
+
     const noResearchPayload = {
       ...payload,
       fact_checks: [],

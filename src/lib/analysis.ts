@@ -273,18 +273,13 @@ function rankedSummarySentences(page: ExtractedPage, sentences: string[], count:
 function conciseSummaryClause(sentence: string) {
   const normalized = normalizeWhitespace(sentence);
   const withoutImageCredit = normalized.replace(/\s*\([^()]{0,100}(?:Getty Images|AP Photo|Reuters|AFP)[^()]*\)\.?$/i, "");
-  const naturalClause = withoutImageCredit.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
-  if (naturalClause.length <= 240) return naturalClause.replace(/[,:;]$/, "");
-
-  const punctuation = Math.max(naturalClause.lastIndexOf(",", 240), naturalClause.lastIndexOf(";", 240));
-  return punctuation >= 100 ? naturalClause.slice(0, punctuation).trim() : naturalClause;
+  const withoutLeadingTransition = withoutImageCredit.replace(/^(?:But|And|Yet|However|Nevertheless|Nonetheless),?\s+/i, "");
+  const naturalClause = withoutLeadingTransition.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
+  return naturalClause.replace(/[,:;]$/, "");
 }
 
-function lowerSentenceLead(value: string) {
-  if (/^(?:The|A|An|This|That|These|Those|It|He|She|They|During|After|Before|While|Although|According|In|On|At|By|From|Under|Over|As|Officials|Critics|Supporters|Opponents|Lawmakers|Researchers|Residents|Voters|Police|Authorities|Advocates|Experts|Witnesses)\b/.test(value)) {
-    return `${value[0].toLowerCase()}${value.slice(1)}`;
-  }
-  return value;
+function standaloneSentenceLead(value: string) {
+  return /^[a-z]/.test(value) ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }
 
 function standaloneQuote(value: string) {
@@ -334,10 +329,10 @@ function summaryEvidence(page: ExtractedPage, evidenceItems: EvidenceItem[], sen
   );
   const clauses = summarySentences.map(conciseSummaryClause).filter(Boolean);
   const [first, ...rest] = clauses;
-  const lead = page.contentType === "bill" ? "The source explains that" : "The article reports that";
+  const lead = page.contentType === "bill" ? "The source explains" : "The article reports";
   const summary = [
-    quoteLedSummary(first) || `${lead} ${lowerSentenceLead(first).replace(/[.!?]+$/, "")}.`,
-    ...rest.map((clause) => quoteLedSummary(clause) || `It also notes that ${lowerSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
+    quoteLedSummary(first) || `${lead}: ${standaloneSentenceLead(first).replace(/[.!?]+$/, "")}.`,
+    ...rest.map((clause) => quoteLedSummary(clause) || `It also notes: ${standaloneSentenceLead(clause).replace(/[.!?]+$/, "")}.`)
   ].join(" ");
   return { summary, evidenceIds };
 }
