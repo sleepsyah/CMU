@@ -2,6 +2,27 @@ const MIN_ARTICLE_WORDS = 90;
 const MIN_ARTICLE_SENTENCES = 2;
 const HIGHLIGHT_CLASS = "ellipsis-source-highlight";
 const HIGHLIGHT_STYLE_ID = "ellipsis-source-highlight-style";
+const ARTICLE_BODY_SELECTORS = [
+  "[itemprop='articleBody']",
+  "[data-testid='article-body']",
+  "[data-testid='story-body']",
+  ".article-body",
+  ".story-body",
+  ".entry-content",
+  ".post-content"
+];
+const ARTICLE_CONTAINER_SELECTORS = ["article", "[role='article']"];
+const NON_ARTICLE_SELECTOR = [
+  "script", "style", "nav", "footer", "header", "aside", "form", "button", "iframe", "noscript",
+  "svg", "canvas", "picture", "video", "figcaption", "[hidden]", "[aria-hidden='true']", "[role='navigation']",
+  "[role='complementary']", "[aria-modal='true']", "[aria-label*='cookie' i]", "[aria-label*='consent' i]",
+  "[aria-label*='related' i]", "[aria-label*='recommended' i]", "[aria-label*='advertisement' i]",
+  "[data-testid*='advertisement' i]", "[data-testid*='related' i]", "[id*='cookie' i]", "[id*='consent' i]",
+  "[id*='related' i]", "[id*='recommend' i]", "[id*='recircul' i]", "[id*='most-read' i]",
+  "[class*='cookie' i]", "[class*='consent' i]", "[class*='related' i]", "[class*='recommend' i]",
+  "[class*='recircul' i]", "[class*='most-read' i]", "[class*='newsletter' i]", "[class*='comments' i]",
+  "[class*='promo' i]"
+].join(", ");
 
 function cleanInline(value) {
   return String(value || "")
@@ -60,6 +81,18 @@ function isNoisyBlock(text) {
     /^(?:[A-Z][\w.'’–-]+(?:\s+[A-Z][\w.'’–-]+){0,4})\s+has\s+(?:worked|covered|reported)\b/i.test(text);
 }
 
+function isArticleBoundaryHeading(text) {
+  return /^(?:related(?: stories| articles| coverage)?|recommended(?: for you)?|more (?:from|on|stories)|read (?:more|next)|also read|most (?:read|popular)|latest (?:news|stories)|you may also like|what to read next)$/i.test(cleanInline(text));
+}
+
+function articleHeadline() {
+  return cleanInline(
+    metaContent('meta[property="og:title"], meta[name="twitter:title"]') ||
+      document.querySelector('[itemprop="headline"], article h1, main h1, h1')?.textContent ||
+      document.title
+  ) || "Untitled page";
+}
+
 function cleanReadableBlock(text) {
   const value = cleanInline(text);
   const machineMarker = value.search(/(?:\bArray\s*\(\s*(?:\[[^\]]+\]\s*=>)?|\[(?:actionDate|displayText|externalActionCode|description|chamberOfAction|type|text)\]\s*=>|\b(?:Introduced|Passed(?:\/agreed to)?|Became Law|Committee)Array\s*\()/i);
@@ -83,28 +116,26 @@ function isUsefulBlock(text) {
   return true;
 }
 
-function collectReadableBlocks(root) {
+function collectReadableBlocks(root, options = {}) {
   const cloned = root.cloneNode(true);
-  cloned
-    .querySelectorAll(
-      "script, style, nav, footer, header, aside, form, button, iframe, noscript, svg, canvas, picture, video, figcaption, [hidden], [aria-hidden='true'], [role='navigation'], [role='complementary'], [aria-label*='advertisement' i], [data-testid*='advertisement' i], [data-testid*='related' i], [class*='newsletter' i], [class*='recommended' i], [class*='related-content' i], [class*='promo' i]"
-    )
-    .forEach((node) => node.remove());
+  cloned.querySelectorAll(NON_ARTICLE_SELECTOR).forEach((node) => node.remove());
 
   const blocks = [];
   const seen = new Set();
-  const blockNodes = cloned.querySelectorAll("h1, h2, p, li, blockquote, [data-testid*='paragraph'], [class*='paragraph']");
+  const blockNodes = cloned.querySelectorAll("h2, h3, p, li, blockquote, [data-testid*='paragraph'], [class*='paragraph']");
 
   for (const node of blockNodes) {
     const text = cleanReadableBlock(node.innerText || node.textContent || "");
+    if (/^H[23]$/.test(node.tagName) && isArticleBoundaryHeading(text)) break;
     const key = text.toLowerCase();
     if (!isUsefulBlock(text) || seen.has(key)) continue;
+    if (node.querySelectorAll?.("a").length && linkDensity(node, text) > 0.65) continue;
     seen.add(key);
     blocks.push(text);
   }
 
   if (blocks.length >= 2) return blocks.join("\n\n");
-  return cleanReadableText(cloned.innerText || cloned.textContent || "");
+  return options.allowRawFallback ? cleanReadableText(cloned.innerText || cloned.textContent || "") : blocks.join("\n\n");
 }
 
 function linkDensity(element, text) {
@@ -124,44 +155,55 @@ function scoreCandidate(element, text) {
   return words + sentences * 35 + paragraphs * 18 + semanticBonus - densityPenalty - broadContainerPenalty;
 }
 
-function extractReadableText() {
-  if (isLikelyIndexPage(location.href)) return "";
+function uniqueVisibleCandidates(selectors) {
+  return selectors
+    .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+    .filter((candidate, index, all) => isVisible(candidate) && all.indexOf(candidate) === index);
+}
 
-  const selectors = [
-    "article",
-    "main article",
-    "[role='article']",
-    "[itemprop='articleBody']",
-    "[data-testid='article-body']",
-    "[data-testid='story-body']",
-    "[data-testid*='article']",
-    ".article-body",
-    ".story-body",
-    ".entry-content",
-    ".post-content",
-    "main"
-  ];
+function firstVisibleCandidateGroup(selectors) {
+  for (const selector of selectors) {
+    const candidates = uniqueVisibleCandidates([selector]);
+    if (candidates.length) return candidates;
+  }
+  return [];
+}
 
-  const candidates = [
-    ...selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))),
-    ...(isCongressBillUrl(location.href) || hasArticleMetadata() ? [document.body] : [])
-  ].filter(Boolean);
-
+function bestCandidateText(candidates, options = {}) {
   let best = { text: "", score: Number.NEGATIVE_INFINITY };
   for (const candidate of candidates) {
-    if (!isVisible(candidate)) continue;
-    const text = collectReadableBlocks(candidate);
+    const text = collectReadableBlocks(candidate, options);
     const score = scoreCandidate(candidate, text);
     if (score > best.score) best = { text, score };
   }
+  return best.text;
+}
 
-  const words = countWords(best.text);
-  const sentences = countSentences(best.text);
+function extractReadableText(headline = articleHeadline()) {
+  if (isLikelyIndexPage(location.href)) return "";
+
+  if (isCongressBillUrl(location.href)) return bestCandidateText([document.querySelector("main"), document.body].filter(Boolean), { allowRawFallback: true });
+
+  // Prefer a publisher's explicit story-body boundary. Broader article/main containers
+  // often include cookie notices and recirculated headlines after the story.
+  const bodyCandidates = firstVisibleCandidateGroup(ARTICLE_BODY_SELECTORS);
+  const articleCandidates = uniqueVisibleCandidates(ARTICLE_CONTAINER_SELECTORS);
+  const mainCandidates = hasArticleMetadata() ? uniqueVisibleCandidates(["main"]) : [];
+  const body = bestCandidateText(bodyCandidates.length ? bodyCandidates : articleCandidates.length ? articleCandidates : mainCandidates);
+  const normalizedHeadline = normalizeForSearch(headline);
+  const bodyWithoutDuplicateHeadline = body
+    .split(/\n{2,}/)
+    .filter((block) => normalizeForSearch(block) !== normalizedHeadline)
+    .join("\n\n");
+  const text = [headline, bodyWithoutDuplicateHeadline].filter(Boolean).join("\n\n");
+
+  const words = countWords(text);
+  const sentences = countSentences(bodyWithoutDuplicateHeadline);
   if (!isCongressBillUrl(location.href) && (words < MIN_ARTICLE_WORDS || sentences < MIN_ARTICLE_SENTENCES)) {
     return "";
   }
 
-  return best.text;
+  return text;
 }
 
 function ensureHighlightStyle() {
@@ -480,9 +522,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "ELLIPSIS_EXTRACT_PAGE") return false;
 
   try {
-    const text = extractReadableText();
+    const title = articleHeadline();
+    const text = extractReadableText(title);
     const payload = {
-      title: cleanInline(document.title) || "Untitled page",
+      title,
       url: canonicalUrl(),
       sourceName: sourceNameFromLocation(),
       author: authorName(),

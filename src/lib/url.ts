@@ -3,6 +3,16 @@ import type { ExtractedPage } from "../types";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
 const FETCH_TIMEOUT_MS = 12_000;
+const ARTICLE_BODY_SELECTOR = "[itemprop='articleBody'], [data-testid='article-body'], [data-testid='story-body'], .article-body, .story-body, .entry-content, .post-content";
+const ARTICLE_CONTAINER_SELECTOR = "article, [role='article']";
+const NON_ARTICLE_SELECTOR = [
+  "script", "style", "nav", "footer", "header", "aside", "form", "button", "iframe", "noscript", "svg", "canvas", "video",
+  "[hidden]", "[aria-hidden='true']", "[role='navigation']", "[role='complementary']", "[aria-modal='true']",
+  "[aria-label*='cookie' i]", "[aria-label*='consent' i]", "[aria-label*='related' i]", "[aria-label*='recommended' i]",
+  "[id*='cookie' i]", "[id*='consent' i]", "[id*='related' i]", "[id*='recommend' i]", "[id*='recircul' i]", "[id*='most-read' i]",
+  "[class*='cookie' i]", "[class*='consent' i]", "[class*='related' i]", "[class*='recommend' i]", "[class*='recircul' i]",
+  "[class*='most-read' i]", "[class*='newsletter' i]", "[class*='comments' i]"
+].join(", ");
 
 export async function fetchPageFromUrl(value: string): Promise<ExtractedPage> {
   const url = normalizeWebUrl(value);
@@ -57,23 +67,31 @@ export function normalizeWebUrl(value: string) {
 
 export function extractPageFromHtml(html: string, url: string): ExtractedPage {
   const document = new DOMParser().parseFromString(html, "text/html");
-  const title = cleanInline(meta(document, 'meta[property="og:title"]') || document.title) || "Untitled page";
-  const root = document.querySelector("article, [role='article'], [itemprop='articleBody'], main") || document.body;
+  const title = cleanInline(
+    meta(document, 'meta[property="og:title"], meta[name="twitter:title"]') ||
+    document.querySelector('[itemprop="headline"], article h1, main h1, h1')?.textContent ||
+    document.title
+  ) || "Untitled page";
+  const root = firstMatchingRoot(document, ARTICLE_BODY_SELECTOR.split(", ")) || document.querySelector(ARTICLE_CONTAINER_SELECTOR) || document.querySelector("main");
+  if (!root) throw new Error("The link did not expose a distinct article body. Open the page in a tab or paste the article text instead.");
   const clone = root.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("script, style, nav, footer, header, aside, form, button, iframe, noscript, svg, canvas, video, [hidden], [aria-hidden='true'], [role='navigation']")
-    .forEach((node) => node.remove());
+  clone.querySelectorAll(NON_ARTICLE_SELECTOR).forEach((node) => node.remove());
 
   const blocks: string[] = [];
   const seen = new Set<string>();
-  clone.querySelectorAll("h1, h2, p, li, blockquote").forEach((node) => {
+  const blockNodes = Array.from(clone.querySelectorAll("h2, h3, p, li, blockquote"));
+  for (const node of blockNodes) {
     const text = cleanReadableBlock(node.textContent || "");
+    if (/^H[23]$/.test(node.tagName) && isArticleBoundaryHeading(text)) break;
     const key = text.toLowerCase();
-    if (text.length < 35 || countWords(text) < 7 || seen.has(key) || isNoise(text)) return;
+    if (text.length < 35 || countWords(text) < 7 || seen.has(key) || isNoise(text)) continue;
+    if (node.querySelectorAll("a").length && linkedTextRatio(node, text) > 0.65) continue;
     seen.add(key);
     blocks.push(text);
-  });
+  }
 
-  const text = blocks.length >= 2 ? blocks.join("\n\n") : cleanReadableText(clone.textContent || "");
+  const body = blocks.join("\n\n");
+  const text = [title, ...body.split(/\n{2,}/).filter((block) => cleanInline(block).toLowerCase() !== title.toLowerCase())].filter(Boolean).join("\n\n");
   if (text.length < 120) throw new Error("The link did not expose enough readable text. Open the page in a tab or paste the text instead.");
 
   const parsedUrl = new URL(url);
@@ -105,6 +123,14 @@ function meta(document: Document, selector: string) {
   return document.querySelector(selector)?.getAttribute("content") || "";
 }
 
+function firstMatchingRoot(document: Document, selectors: string[]) {
+  for (const selector of selectors) {
+    const root = document.querySelector(selector);
+    if (root) return root;
+  }
+  return null;
+}
+
 function cleanInline(value: string) {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -116,16 +142,17 @@ function cleanReadableBlock(value: string) {
   return readable.replace(/\s*\|?\s*Get alerts\s*$/i, "").trim();
 }
 
-function cleanReadableText(value: string) {
-  return value
-    .split(/\r?\n+/)
-    .map(cleanReadableBlock)
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 function countWords(value: string) {
   return value.split(/\s+/).filter(Boolean).length;
+}
+
+function linkedTextRatio(node: Element, text: string) {
+  const linkedText = Array.from(node.querySelectorAll("a")).map((anchor) => cleanInline(anchor.textContent || "")).join(" ");
+  return text.length ? linkedText.length / text.length : 1;
+}
+
+function isArticleBoundaryHeading(value: string) {
+  return /^(?:related(?: stories| articles| coverage)?|recommended(?: for you)?|more (?:from|on|stories)|read (?:more|next)|also read|most (?:read|popular)|latest (?:news|stories)|you may also like|what to read next)$/i.test(cleanInline(value));
 }
 
 function isNoise(value: string) {
