@@ -146,6 +146,41 @@ describe("article analysis", () => {
     expect(summaryEvidence).not.toContain(quote);
   });
 
+  it("preserves proper-name capitalization and separates an adjacent quotation", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Slotkin criticizes SAVE America Act",
+        text: [
+          "Elissa Slotkin, D-Mich., said the Safeguard American Voter Eligibility Act (SAVE) America Act would make it harder for Democrats to win elections. (Tom Williams/Getty Images).",
+          "The White House dismissed Slotkin's claims about SAVE America hurting Democrats.\"If securing America’s elections through commonsense methods like voter ID and proof of citizenship will make it impossible for Democrats to win elections."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("reports that Elissa Slotkin");
+    expect(analysis.summary).not.toContain("reports that elissa Slotkin");
+    expect(analysis.summary).toContain("notes that the White House dismissed");
+    expect(analysis.summary).not.toContain("Democrats.\"");
+    expect(analysis.summary).not.toContain("Getty Images");
+  });
+
+  it("preserves a single-word proper name at the start of a summary clause", () => {
+    const analysis = analyzePage(
+      page({
+        title: "Debate over SAVE America Act",
+        text: [
+          "Elissa Slotkin said the SAVE America Act would make it harder for Democrats to win elections.",
+          "Trump argued for months that Democrats oppose the SAVE America Act because it would make it harder to \"cheat\" in elections."
+        ].join(" ")
+      })
+    );
+    if (analysis.contentType !== "article") throw new Error("Expected article analysis");
+
+    expect(analysis.summary).toContain("notes that Trump argued");
+    expect(analysis.summary).not.toContain("notes that trump argued");
+  });
+
   it("keeps source extraction separate from genre classification", () => {
     const analysis = analyzePage(
       page({

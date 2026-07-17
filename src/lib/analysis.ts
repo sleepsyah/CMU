@@ -126,7 +126,9 @@ export function cleanDisplayTitle(text: string) {
 function splitSentences(text: string) {
   return cleanReadableSourceText(text)
     .split(/\n{2,}/)
-    .flatMap((block) => normalizeWhitespace(block).split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/))
+    .flatMap((block) => normalizeWhitespace(block)
+      .split(/(?<=[.!?])(?=["“][A-Z0-9])/)
+      .flatMap((sentence) => sentence.split(/(?<=[.!?])\s+(?=[A-Z0-9"'“])/)))
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length > 24 && !MACHINE_SERIALIZATION.test(sentence) && !/\[[A-Za-z][^\]]{0,40}\]\s*=>/.test(sentence))
     .slice(0, 120);
@@ -270,7 +272,8 @@ function rankedSummarySentences(page: ExtractedPage, sentences: string[], count:
 
 function conciseSummaryClause(sentence: string) {
   const normalized = normalizeWhitespace(sentence);
-  const naturalClause = normalized.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
+  const withoutImageCredit = normalized.replace(/\s*\([^()]{0,100}(?:Getty Images|AP Photo|Reuters|AFP)[^()]*\)\.?$/i, "");
+  const naturalClause = withoutImageCredit.split(/;\s+|,\s+(?=(?:according to|after|although|before|but|including|leading to|which|while|with)\b)/i)[0].trim();
   if (naturalClause.length <= 240) return naturalClause.replace(/[,:;]$/, "");
 
   const punctuation = Math.max(naturalClause.lastIndexOf(",", 240), naturalClause.lastIndexOf(";", 240));
@@ -278,7 +281,10 @@ function conciseSummaryClause(sentence: string) {
 }
 
 function lowerSentenceLead(value: string) {
-  return /^[A-Z][a-z]/.test(value) ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+  if (/^(?:The|A|An|This|That|These|Those|It|He|She|They|During|After|Before|While|Although|According|In|On|At|By|From|Under|Over|As|Officials|Critics|Supporters|Opponents|Lawmakers|Researchers|Residents|Voters|Police|Authorities|Advocates|Experts|Witnesses)\b/.test(value)) {
+    return `${value[0].toLowerCase()}${value.slice(1)}`;
+  }
+  return value;
 }
 
 function standaloneQuote(value: string) {
