@@ -23,7 +23,6 @@ import { classifyPastedText, confidenceLabel } from "../lib/analysis";
 import { beginAiLogin, checkAiConnection, subscribeAiProgress } from "../lib/ai";
 import { analyzePageWithBackend, biasProfileFromAssessment } from "../lib/backend";
 import { createManualPage, extractActivePage, highlightActivePagePassage } from "../lib/chrome";
-import { sourceRoleLabel } from "../lib/sources";
 import {
   clearFeedbackLogs,
   clearSavedAnalyses,
@@ -43,7 +42,6 @@ import type {
   AiLoginResult,
   AiProvider,
   AiSettings,
-  ArticleSource,
   ArticleGenre,
   BillAnalysis,
   ContentType,
@@ -399,15 +397,6 @@ function LanguagePanel({ analysis, onShowSource }: { analysis: Analysis; onShowS
   );
 }
 
-function sourceTypeLabel(source: ArticleSource) {
-  if (source.entityType === "government") return "Government source";
-  if (source.entityType === "media") return "News or reporting organization";
-  if (source.entityType === "anonymous_source") return "Unnamed attributed source";
-  if (source.entityType === "document") return "Report, study, or official document";
-  if (source.entityType === "person") return "Named person";
-  return "Organization";
-}
-
 function SourcesAndVoicesPanel({ analysis, onShowSource }: { analysis: Analysis; onShowSource: (text: string) => void }) {
   if (analysis.contentType === "bill") {
     return (
@@ -429,9 +418,6 @@ function SourcesAndVoicesPanel({ analysis, onShowSource }: { analysis: Analysis;
               <details className="source-voice-disclosure">
                 <summary><strong>{source.displayName}</strong></summary>
                 <div className="source-voice-details">
-                  <span>{sourceTypeLabel(source)} · {sourceRoleLabel(source)}</span>
-                  <p>{source.contributionSummary}</p>
-                  {source.reportedVia?.[0] && <small>Reported through {source.reportedVia[0]}</small>}
                   {source.evidence.length > 0 && (
                     <div className="source-voice-evidence">
                       {source.evidence.map((evidence, index) => (
