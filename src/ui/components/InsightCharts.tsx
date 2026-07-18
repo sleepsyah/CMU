@@ -85,6 +85,12 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
               </span>
             </summary>
             <div className="signal-details">
+              <div className="score-feedback">
+                <DetectionFeedbackControl
+                  target={indicatorFeedbackTarget(dimension, label, metric, signals)}
+                  label={`Review ${label.toLowerCase()} score`}
+                />
+              </div>
               <ul>
                 {signals.map((signal) => (
                   <li key={signal.id}>
@@ -94,7 +100,6 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
                   </li>
                 ))}
               </ul>
-              <DetectionFeedbackControl target={indicatorFeedbackTarget(dimension, label, metric, signals)} />
             </div>
           </details>
         );

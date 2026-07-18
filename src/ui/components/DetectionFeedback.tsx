@@ -150,7 +150,7 @@ export function perspectiveFeedbackTarget(source: ArticleSource, evidence: Sourc
   };
 }
 
-export function DetectionFeedbackControl({ target }: { target: DetectionFeedbackTarget }) {
+export function DetectionFeedbackControl({ target, label = "Review detection" }: { target: DetectionFeedbackTarget; label?: string }) {
   const { analysis, records, save, remove } = useFeedback();
   const detectionId = stableDetectionId(analysis.url, target);
   const existing = records.find((record) => record.detection.detection_id === detectionId);
@@ -190,7 +190,7 @@ export function DetectionFeedbackControl({ target }: { target: DetectionFeedback
   return (
     <details className="detection-feedback" data-detection-id={detectionId}>
       <summary>
-        Review detection
+        {label}
         {existing && <span className={`feedback-state is-${existing.user_feedback.accuracy}`}>{existing.user_feedback.accuracy === "accurate" ? "Accurate" : "Inaccurate"}</span>}
       </summary>
       <div className="detection-feedback-body">
