@@ -26,10 +26,10 @@ const PRONOUN_LABEL = /^(?:i|me|my|mine|we|us|our|ours|you|your|yours|he|him|his
 const FURNITURE_BLOCK = /^(?:advertisement|add cbs news on google|link copied|read full bio|new updates?|more|copyright\b|follow updates\b|by\s+[A-Z][\p{L} .,'’–-]{1,100})$/iu;
 const REPORTING_VERB = /\b(said|says|told|wrote|argued|warned|explained|reported|announced|stated|confirmed|called|denied|declined\s+to\s+comment|found|showed|according\s+to)\b/gi;
 const DISPLAY_REPORTING_VERB = /\b(?:said|says|told|reported|announced|claimed|according\s+to|confirmed|stated|wrote|argued|warned|explained|denied|found|showed)\b/i;
-const FINITE_CLAUSE_VERB = /\b(?:is|are|was|were|has|have|had|will|would|could|should|did|does|maintained|changed|reversed|insisted|expressed|urged|criticized|condemned|accused|added|struck|summoned|registered)\b/i;
-const FINITE_CLAUSE_PATTERN = /\b[a-z][a-z'’–-]*(?:ed|ing)\s+(?:on|at|after|before|against|for|from|into|over|to|with)\b/i;
+const FINITE_CLAUSE_VERB = /\b(?:is|are|was|were|has|have|had|will|would|could|should|did|does|became|becomes|changed|changes|condemned|criticized|expressed|faced|faces|filed|joined|left|lost|maintained|met|registered|remained|remains|resigned|reversed|served|serves|struck|summoned|took|urged|won|worked|works)\b/i;
+const FINITE_CLAUSE_PATTERN = /\b[a-z][a-z'’–-]*(?:ed|ing)\s+(?:as|on|at|after|before|against|by|during|for|from|into|over|to|with)\b/i;
 const ATTRIBUTIVE_REPORTING_NOUN = /^(?:intention|plan|goal|policy|position|purpose|view|aim|proposal|request|desire|commitment|opposition|support|preference|objective|attack|strike|decision|statement|remarks?|comments?|figures?|data|results?|cases?)\b/i;
-const SOURCE_DESCRIPTOR = /\b(?:administration|advocates?|agency|association|authority|broadcaster|business owners?|channel|coalition|command|committee|company|council|court filing|department|document|employees?|embassy|experts?|families|filing|foundation|government|governor|institute|lawmakers?|military|ministry|news|office|officials?|organization|patients?|people|poll|president|report|researchers?|residents?|rights chief|sen\.?|senator|spokesperson|study|students?|tenants?|union|university|voters?|witnesses?|workers?)\b/i;
+const SOURCE_DESCRIPTOR = /\b(?:administration|advocates?|agency|appeals court|association|auditors?|authority|broadcaster|business owners?|channel|coalition|command|committee|company|council|courts?|court filing|department|document|employees?|embassy|experts?|families|filing|foundation|government|governor|institute|judges?|lawmakers?|military|ministry|news|office|officials?|organization|patients?|people|poll|president|report|researchers?|residents?|rights chief|sen\.?|senator|spokesperson|study|students?|tenants?|union|university|voters?|witnesses?|workers?)\b/i;
 const PERSON_TITLE = /\b(?:president|prime minister|foreign minister|governor|sen\.?|senator|rep\.?|representative|secretary|chair|director|commander|chief|general|gen\.?|spokesman|spokeswoman|spokesperson|mr\.?|mrs\.?|ms\.?|dr\.?)\b/i;
 const PUBLIC_ROLE_TITLE = /\b(?:president|prime minister|foreign minister|governor|sen\.?|senator|rep\.?|representative|secretary|chair|director|commander|chief|general|gen\.?|spokesman|spokeswoman|spokesperson)\b/i;
 const MEDIA_LABEL = /\b(?:news|agency|broadcaster|media|press|reuters|afp|associated press)\b/i;
@@ -42,6 +42,7 @@ const ANONYMOUS_GROUP = /^(?:two|three|four|several|multiple|some)\s+(?:(?:senio
 const GENERIC_TITLE_ALIAS = /^(?:the\s+)?(president|governor|prime minister|foreign minister|secretary|spokesperson)$/i;
 const GENERIC_INSTITUTION_ALIAS = /^(?:the\s+)?(?:ministry|department|agency|office|government|administration|military|command)$/i;
 const HONORIFICS = /\b(?:mr|mrs|ms|dr|sen|senator|rep|representative|president|prime minister|foreign minister|governor|general|gen|secretary)\b/gi;
+const ATTRIBUTION_CLAUSE_BOUNDARY = /\b(?:after|before|when|while|because|although|though|once|since|whereas)\b/gi;
 
 function normalizeWhitespace(value: string) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
@@ -122,6 +123,16 @@ function cleanActor(value: string) {
     .trim();
 }
 
+function containsFinitePredicate(value: string) {
+  return /\b(?:it|they|he|she|we|i|which|who|that)\s+(?:am|are|is|was|were|has|have|had|will|would|could|should|did|does|maintained|announced|said|reported)\b/i.test(value) ||
+    FINITE_CLAUSE_VERB.test(value) ||
+    FINITE_CLAUSE_PATTERN.test(value);
+}
+
+function startsWithNonFiniteModifier(value: string) {
+  return /^(?:[a-z][a-z'’–-]*ing\s+(?:a|an|the|his|her|its|their)\b|(?:being|becoming|having|serving|working)\b)/.test(normalizeWhitespace(value));
+}
+
 export function validateSourceDisplayName(candidate: string, evidenceText: string) {
   const sourceSpan = normalizeWhitespace(candidate);
   let name = cleanActor(sourceSpan);
@@ -139,8 +150,7 @@ export function validateSourceDisplayName(candidate: string, evidenceText: strin
     repairs.push("removed sentence punctuation");
   }
   const words = name.split(/\s+/).filter(Boolean);
-  const containsClause = /\b(?:it|they|he|she|we|i|which|who|that)\s+(?:am|are|is|was|were|has|have|had|will|would|could|should|did|does|maintained|announced|said|reported)\b/i.test(name) ||
-    (words.length > 6 && (FINITE_CLAUSE_VERB.test(name) || FINITE_CLAUSE_PATTERN.test(name)));
+  const containsClause = containsFinitePredicate(name);
   const containsSentenceSyntax = /[“”"]|‘[^’]+’|\b\d{1,2}:\d{2}\b/.test(name);
   const stillHasReportingVerb = DISPLAY_REPORTING_VERB.test(name);
   const normalizedName = normalizedEntity(name);
@@ -148,6 +158,7 @@ export function validateSourceDisplayName(candidate: string, evidenceText: strin
   const overlap = normalizedName.length / Math.max(normalizedEvidence.length, 1);
   if (!name) return { name: null, sourceSpan, status: "rejected" as const, reason: "empty source span" };
   if (stillHasReportingVerb) return { name: null, sourceSpan, status: "rejected" as const, reason: "source span still contains a reporting verb" };
+  if (startsWithNonFiniteModifier(name)) return { name: null, sourceSpan, status: "rejected" as const, reason: "source span is a non-finite modifier, not an attribution subject" };
   if (containsClause) return { name: null, sourceSpan, status: "rejected" as const, reason: "source span contains a finite clause" };
   if (containsSentenceSyntax) return { name: null, sourceSpan, status: "rejected" as const, reason: "source span contains sentence or quotation syntax" };
   if (words.length > 24) return { name: null, sourceSpan, status: "rejected" as const, reason: "source span exceeds the safe entity word limit" };
@@ -175,6 +186,31 @@ function actorLooksValid(actor: string) {
 function subjectBefore(sentence: string, verbIndex: number) {
   let prefix = sentence.slice(0, verbIndex).trim();
   if (!prefix || /["”']\s*,?$/.test(prefix)) return "";
+  // A reporting verb belongs to the nearest grammatical clause, not necessarily
+  // to the main subject at the beginning of the sentence.
+  ATTRIBUTION_CLAUSE_BOUNDARY.lastIndex = 0;
+  let boundarySubject = "";
+  for (const boundary of prefix.matchAll(ATTRIBUTION_CLAUSE_BOUNDARY)) {
+    if (boundary.index === undefined) continue;
+    const candidate = cleanActor(prefix.slice(boundary.index + boundary[0].length));
+    if (!startsWithNonFiniteModifier(candidate) && !containsFinitePredicate(candidate) && actorLooksValid(candidate)) {
+      boundarySubject = candidate;
+    }
+  }
+  if (boundarySubject) prefix = boundarySubject;
+  else {
+    // Remove a trailing relative clause before resolving the matrix subject:
+    // "Rogoff, who spent 20 years as a prosecutor, said ..." -> "Rogoff".
+    const relativeClause = prefix.match(/^(.*?),\s+(?:who|whom|whose|which|where)\b.*?,\s*$/i);
+    if (relativeClause) prefix = relativeClause[1].trim();
+  }
+  const coordinateClauses = Array.from(prefix.matchAll(/\b(?:and|but)\b/gi));
+  const coordinate = coordinateClauses.at(-1);
+  if (coordinate?.index !== undefined) {
+    const left = prefix.slice(0, coordinate.index).trim();
+    const right = cleanActor(prefix.slice(coordinate.index + coordinate[0].length));
+    if (containsFinitePredicate(left) && actorLooksValid(right)) prefix = right;
+  }
   const clauses = prefix.split(/,\s+(?:and|but|while)\s+|;\s+/i);
   prefix = clauses.at(-1) || prefix;
   const updateLabel = prefix.lastIndexOf(":");

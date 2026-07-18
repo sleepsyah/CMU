@@ -1,4 +1,5 @@
 import { cleanReadableSourceText, confidenceLabel, FRAME_LABELS } from "./analysis";
+import { cleanOverallBiasSummary } from "./summary";
 import type {
   AiAnalysis,
   AiConnectionStatus,
@@ -145,6 +146,10 @@ export function enhanceAnalysisWithCodex(analysis: Analysis, page: ExtractedPage
 function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPayload, provider: AiProvider, supportingAssessment?: BackendBiasAnalysis): Analysis {
   const providerName = providerLabel(provider);
   const completedSummary = completeSummary(payload.summary, 500) || analysis.summary;
+  const completedBiasSummary = cleanOverallBiasSummary(
+    payload.overall_bias.summary,
+    analysis.biasProfile?.summary || "The overall framing explanation was incomplete and could not be displayed."
+  );
   const evidence: EvidenceItem[] = [];
   const summaryEvidenceIds = payload.summary_evidence
     .map((quote) => matchedSourceQuote(sourceText, quote))
@@ -325,7 +330,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     biasProfile: {
       score: clamp(Math.round(payload.overall_bias.score), 0, 100),
       level: payload.overall_bias.level,
-      summary: bounded(payload.overall_bias.summary, 280)
+      summary: completedBiasSummary
     },
     evidence: dedupeEvidence(evidence),
     backendBias: aiBiasAssessment(aiSignals, provider),

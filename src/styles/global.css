@@ -991,6 +991,21 @@ blockquote {
   border-top: 1px solid var(--line);
 }
 
+.score-feedback .detection-feedback {
+  margin-top: 0;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.score-feedback {
+  margin-top: -18px;
+  margin-bottom: 20px;
+}
+
+.score-feedback .detection-feedback > summary {
+  min-height: 25px;
+}
+
 .detection-feedback > summary {
   display: flex;
   min-height: 30px;

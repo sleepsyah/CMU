@@ -73,6 +73,13 @@ describe("Chrome Native Messaging protocol", () => {
     expect(prompt).toMatch(/Do not infer ideological positions, missing perspectives, fairness, balance/i);
   });
 
+  it("allows enough room for a complete overall-bias explanation", () => {
+    expect(OUTPUT_SCHEMA.properties.overall_bias.properties.summary.maxLength).toBe(480);
+    const { prompt } = buildAnalysisPrompt({ raw_text: "A sufficiently long article passage describes a policy dispute with attributed comments, procedural history, and several contrasting descriptions from named participants." });
+    expect(prompt).toMatch(/two polished English sentences/i);
+    expect(prompt).toMatch(/end both with sentence punctuation/i);
+  });
+
   it("does not silently truncate source text at the former 30,000-character limit", () => {
     const rawText = "A complete live-blog update with attributed source evidence. ".repeat(700);
     expect(rawText.length).toBeGreaterThan(30_000);
