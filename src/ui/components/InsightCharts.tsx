@@ -1,6 +1,7 @@
 import { CaretDown } from "@phosphor-icons/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { BackendBiasAnalysis, BiasProfile, BiasSignal, FrameSignal } from "../../types";
+import { cleanOverallBiasSummary } from "../../lib/summary";
 import AnimatedContent from "../reactbits/AnimatedContent";
 import CountUp from "../reactbits/CountUp";
 import { DetectionFeedbackControl, indicatorFeedbackTarget, signalFeedbackTarget } from "./DetectionFeedback";
@@ -104,6 +105,7 @@ export function BiasSignalChart({ assessment }: { assessment: BackendBiasAnalysi
 
 export function BiasProfileBand({ profile }: { profile: BiasProfile }) {
   const score = Math.max(0, Math.min(100, Math.round(profile.score)));
+  const summary = cleanOverallBiasSummary(profile.summary) || "The overall framing explanation was incomplete and was omitted.";
   return (
     <div className={`confidence-band is-${tone(score)}`}>
       <div className="confidence-copy">
@@ -112,7 +114,7 @@ export function BiasProfileBand({ profile }: { profile: BiasProfile }) {
       </div>
       <div className="confidence-track" role="progressbar" aria-label="Overall source framing" aria-valuemin={0} aria-valuemax={100} aria-valuenow={score}><span style={{ width: `${score}%` }} /></div>
       <div className="confidence-scale" aria-hidden="true"><span>Neutral</span><span>Strongly framed</span></div>
-      <p>{profile.summary}</p>
+      <p>{summary}</p>
     </div>
   );
 }
