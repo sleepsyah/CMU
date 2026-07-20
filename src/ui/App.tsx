@@ -1156,7 +1156,7 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
       </div>
 
       <form className="url-form" onSubmit={submitUrl}>
-        <label htmlFor="source-link">Or analyze a link</label>
+        <label htmlFor="source-link">Paste a link</label>
         <div className="inline-field">
           <input id="source-link" inputMode="url" value={url} onChange={(event) => { setUrl(event.target.value); setUrlError(null); }} placeholder="https://..." />
           <button className="secondary-button" type="submit" disabled={!url.trim() || loading}>Analyze</button>
@@ -1164,8 +1164,8 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
         {urlError && <p className="field-error">{urlError}</p>}
       </form>
 
-      <details className="disclosure paste-disclosure">
-        <summary>Paste text instead</summary>
+      <section className="paste-form">
+        <span className="paste-form-label">Paste the text</span>
         <form className="disclosure-body" onSubmit={submitText}>
           <div className="field">
             <label htmlFor="manual-text">Article or bill text</label>
@@ -1190,7 +1190,7 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
           </details>
           <button className="secondary-button" type="submit" disabled={text.trim().length < 120 || loading}>Analyze pasted text</button>
         </form>
-      </details>
+      </section>
 
     </section>
   );
@@ -1399,7 +1399,6 @@ export default function App() {
           {analysis && activeView === "analysis" && <span className={`confidence-badge is-${confidenceLabel(analysis.confidenceScore).toLowerCase()}`}>{confidenceLabel(analysis.confidenceScore)} confidence</span>}
           <PersistentAiControl enabled={aiSettings.enabled} connection={aiConnection} onToggle={toggleAi} onOpenSettings={() => openAiSettings(false)} />
           <button className={`topbar-icon-button history-button ${activeView === "saved" ? "is-active" : ""}`} type="button" aria-label={activeView === "saved" ? "Return to analysis" : "Open saved analyses"} title={activeView === "saved" ? "Return to analysis" : "Saved analyses"} onClick={() => { setActiveView((current) => current === "saved" ? "analysis" : "saved"); setNotice(null); }}><ClockCounterClockwise size={17} /></button>
-          <button className="primary-button" type="button" onClick={runPageAnalysis} disabled={loading}><MagnifyingGlass size={15} /> Analyze</button>
         </div>
       </header>
       <div className="content">
