@@ -54,7 +54,7 @@ import {
   perspectiveFeedbackTarget,
   signalFeedbackTarget
 } from "./components/DetectionFeedback";
-import { BiasProfileBand, BiasSignalChart, FramingBars } from "./components/InsightCharts";
+import { BiasProfileBand, BiasSignalChart } from "./components/InsightCharts";
 
 type AppView = "analysis" | "saved";
 type AnalysisSection = "overview" | "language" | "voices" | "evidence";
@@ -292,7 +292,6 @@ function OverviewPanel({ analysis }: { analysis: Analysis }) {
     level: "minimal" as const,
     summary: "No direct framing evidence was found in the extracted source."
   });
-  const framing = analysis.contentType === "article" ? analysis.framingProfile.dominantFrames : [];
   return (
     <div className="analysis-panel overview-panel">
       <section className="prototype-section summary-block">
@@ -305,16 +304,6 @@ function OverviewPanel({ analysis }: { analysis: Analysis }) {
         {analysis.backendBias ? <BiasSignalChart assessment={analysis.backendBias} /> : <p className="panel-empty">Bias dimensions could not be assessed from this extraction.</p>}
       </section>
 
-      <section className="prototype-section main-framing">
-        <span className="prototype-label">{analysis.contentType === "bill" ? "Main issue addressed" : "Main framing"}</span>
-        <p>{analysis.mainIssue.text}</p>
-        {framing.length > 0 && (
-          <details className="inline-disclosure">
-            <summary>Frame profile</summary>
-            <div className="inline-disclosure-body"><FramingBars frames={framing} /></div>
-          </details>
-        )}
-      </section>
     </div>
   );
 }
