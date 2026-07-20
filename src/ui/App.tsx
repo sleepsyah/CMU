@@ -1152,8 +1152,6 @@ function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
   return (
     <section className="surface start-view">
       <div className="start-primary">
-        <h1>Understand what you are reading</h1>
-        <p>Get three evidence-linked checks for a news article or Congress.gov bill.</p>
         <button className="primary-button full-button" type="button" onClick={onAnalyzePage} disabled={loading}><MagnifyingGlass size={16} /> Analyze current page</button>
       </div>
 
@@ -1394,7 +1392,7 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <span className="brand-lockup">
-          <img className="brand-icon" src="/icons/ellipsis-32.png" alt="" aria-hidden="true" />
+          <img className="brand-icon" src="/icons/ellipsis-mark.svg" alt="" aria-hidden="true" />
           <span className="brand-name">Ellipsis</span>
         </span>
         <div className="topbar-actions">

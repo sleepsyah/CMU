@@ -2912,3 +2912,323 @@ blockquote {
     padding-inline: 14px;
   }
 }
+
+/* Unframed-inspired visual system */
+:root {
+  --bg: #edf5ff;
+  --surface: #fffefa;
+  --surface-subtle: #f3f6fb;
+  --surface-blue: #dfeeff;
+  --line: #d6e0ec;
+  --line-strong: #b7c4d4;
+  --text: #201d1a;
+  --muted: #657086;
+  --muted-warm: #747b88;
+  --accent: #3158dc;
+  --accent-strong: #2543bd;
+  --accent-soft: #dce6ff;
+  --highlight: #ff7a47;
+  --highlight-soft: #fff0e9;
+  --good: #3158dc;
+  --warn: #e87942;
+  --bad: #d43f78;
+  --radius: 14px;
+  font-family: "Figtree", "Avenir Next", Avenir, Inter, system-ui, sans-serif;
+}
+
+body {
+  background:
+    radial-gradient(circle at 16% 5%, rgb(97 139 255 / 24%), transparent 28%),
+    radial-gradient(circle at 93% 14%, rgb(255 159 202 / 20%), transparent 24%),
+    linear-gradient(145deg, #e6f1ff 0%, #f7fbff 52%, #fff7f1 100%);
+  background-attachment: fixed;
+}
+
+.app-shell {
+  position: relative;
+  background: transparent;
+}
+
+.app-shell::before {
+  position: fixed;
+  z-index: -1;
+  top: 92px;
+  right: -68px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: rgb(49 88 220 / 8%);
+  content: "";
+}
+
+.topbar {
+  min-height: 64px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgb(183 196 212 / 58%);
+  background: rgb(255 255 255 / 72%);
+  box-shadow: 0 10px 30px rgb(71 94 130 / 7%);
+  backdrop-filter: blur(18px);
+}
+
+.brand-lockup {
+  gap: 8px;
+}
+
+.brand-icon {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+  image-rendering: auto;
+}
+
+.brand-name,
+.start-primary h1,
+.source-heading h1,
+.details-intro h1,
+.history-heading h1,
+.section-heading h2,
+.detail-group h3 {
+  font-family: "Space Grotesk", "Avenir Next", Avenir, Inter, system-ui, sans-serif;
+}
+
+.brand-name {
+  font-size: 17px;
+  font-weight: 620;
+  letter-spacing: 0.005em;
+}
+
+.topbar-actions {
+  gap: 6px;
+}
+
+.persistent-ai {
+  border-color: rgb(183 196 212 / 68%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 66%);
+}
+
+.compact-switch i,
+.switch-control > span {
+  border-radius: 999px;
+}
+
+.topbar-icon-button,
+.history-button {
+  border-radius: 50%;
+}
+
+.primary-button,
+.secondary-button,
+.choice-button,
+.icon-button,
+.compact-action,
+.feedback-choice-row button {
+  border-radius: 999px;
+}
+
+.primary-button {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, #4168e8, #294dcc);
+  box-shadow: 0 8px 18px rgb(49 88 220 / 22%);
+  color: #fff;
+}
+
+.primary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgb(49 88 220 / 28%);
+}
+
+.secondary-button,
+.choice-button,
+.icon-button,
+.compact-action {
+  border-color: rgb(183 196 212 / 78%);
+  background: rgb(255 255 255 / 74%);
+}
+
+.start-view {
+  gap: 18px;
+  padding: 24px 18px 28px;
+  background: transparent;
+}
+
+.start-primary {
+  display: block;
+}
+
+.start-primary > .primary-button {
+  min-height: 48px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.url-form,
+.paste-disclosure {
+  border: 1px solid rgb(183 196 212 / 66%);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 66%);
+  box-shadow: 0 14px 34px rgb(72 94 126 / 7%);
+  backdrop-filter: blur(12px);
+}
+
+.url-form {
+  gap: 9px;
+  padding: 15px;
+}
+
+.paste-disclosure {
+  overflow: hidden;
+}
+
+.paste-disclosure > summary {
+  padding: 14px 16px;
+}
+
+.paste-disclosure .disclosure-body {
+  padding: 2px 16px 16px;
+}
+
+.field input,
+.field select,
+.field textarea,
+.inline-field input {
+  border-color: rgb(183 196 212 / 74%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 78%);
+}
+
+.inline-field input {
+  min-height: 42px;
+}
+
+.source-reference {
+  background:
+    linear-gradient(90deg, rgb(220 230 255 / 72%), transparent 74%),
+    rgb(255 255 255 / 72%);
+}
+
+.analysis-tabs {
+  padding: 8px 10px;
+  gap: 5px;
+  background: rgb(255 255 255 / 58%);
+  backdrop-filter: blur(14px);
+}
+
+.analysis-tabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+}
+
+.analysis-tabs button.is-active {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 14px rgb(49 88 220 / 20%);
+}
+
+.analysis-panel,
+.history-view,
+.loading-state,
+.settings-dialog {
+  background: rgb(255 254 250 / 88%);
+}
+
+.analysis-panel {
+  margin: 12px;
+  border: 1px solid rgb(214 224 236 / 82%);
+  border-radius: 20px;
+  box-shadow: 0 16px 40px rgb(59 84 118 / 8%);
+}
+
+.prototype-label,
+.confidence-copy > span,
+.score-source-banner > span {
+  color: #5c6980;
+  letter-spacing: .11em;
+}
+
+.signal-track,
+.confidence-track,
+.frame-bar {
+  border-radius: 999px;
+  background: #e8eef7;
+}
+
+.signal-fill,
+.confidence-track > span,
+.frame-bar span {
+  border-radius: 999px;
+}
+
+.signal-track.is-moderate .signal-fill,
+.confidence-band.is-moderate .confidence-track > span {
+  background: #ff7a47;
+}
+
+.signal-track.is-high .signal-fill,
+.confidence-band.is-high .confidence-track > span {
+  background: #ed55a0;
+}
+
+.history-view {
+  margin: 14px;
+  padding: 20px;
+  border: 1px solid rgb(214 224 236 / 82%);
+  border-radius: 22px;
+  box-shadow: 0 16px 40px rgb(59 84 118 / 8%);
+}
+
+.history-heading h1,
+.details-intro h1 {
+  font-size: 28px;
+  font-weight: 630;
+  letter-spacing: -.018em;
+}
+
+.source-heading h1 {
+  font-weight: 570;
+  letter-spacing: -.008em;
+}
+
+.section-heading h2,
+.detail-group h3 {
+  font-weight: 570;
+  letter-spacing: .005em;
+}
+
+.settings-backdrop {
+  background: rgb(39 54 84 / 34%);
+  backdrop-filter: blur(8px);
+}
+
+.settings-dialog {
+  overflow: hidden;
+  border-color: rgb(214 224 236 / 85%);
+  border-radius: 22px;
+  box-shadow: 0 28px 70px rgb(31 47 78 / 22%);
+}
+
+.mode-options > label,
+.data-boundary {
+  border-radius: 14px;
+}
+
+.mode-options > label.is-selected {
+  border-color: rgb(49 88 220 / 50%);
+  background: #eef3ff;
+}
+
+.analysis-disclaimer {
+  background: rgb(226 237 255 / 72%);
+}
+
+@media (max-width: 390px) {
+  .start-view {
+    padding-inline: 12px;
+  }
+
+  .topbar {
+    padding-inline: 10px;
+  }
+}
