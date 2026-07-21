@@ -1,6 +1,8 @@
 import { analyzePage, cleanReadableSourceText, confidenceLabel } from "./analysis";
 import { aiProviderLabel, enhanceAnalysisWithAi } from "./ai";
 import { estimateOutletCoverage } from "./coverage";
+import { clampPlacement, lookupBundledOutlet, normalizeOutletHost } from "./outlet";
+import { getCachedOutletProfile } from "./storage";
 import type {
   AiSettings,
   Analysis,
@@ -12,7 +14,8 @@ import type {
   BiasSignal,
   EvidenceItem,
   ExtractedPage,
-  OutletCoverageEstimate
+  OutletCoverageEstimate,
+  OutletProfile
 } from "../types";
 
 const configuredBackendUrl = import.meta.env.PUBLIC_ELLIPSIS_BACKEND_URL?.trim() || "http://127.0.0.1:8000";
@@ -181,6 +184,7 @@ export async function analyzePageWithBackend(page: ExtractedPage, options: Analy
   trace(options, { id: "gather-source", kind: "local", status: "completed", title: "Gather source text", detail: `${readableText.length.toLocaleString()} characters ready`, durationMs: Date.now() - sourceStartedAt });
   const localAnalysis = analyzePage(page);
   const outletCoveragePromise = outletCoverageFor(page, localAnalysis, options);
+  const outletProfile = await outletProfileFor(page, localAnalysis, options);
   const localAssessment = localBiasAssessment(readableText);
   const supportingAssessment = await modelSupportedAssessment(localAssessment, readableText, options);
   let fallbackAssessment = supportingAssessment;
@@ -189,7 +193,7 @@ export async function analyzePageWithBackend(page: ExtractedPage, options: Analy
   if (aiEnabled) {
     const provider = options.aiSettings?.provider || "codex";
     const providerName = aiProviderLabel(provider);
-    const supportedAnalysis = attachBiasAssessment(localAnalysis, supportingAssessment);
+    const supportedAnalysis = attachOutletProfile(attachBiasAssessment(localAnalysis, supportingAssessment), outletProfile);
     try {
       const completed = await enhanceAnalysisWithAi(supportedAnalysis, page, provider, options.traceId, supportingAssessment);
       trace(options, { id: "ai-analysis", kind: "runtime", status: "completed", title: `${providerName} analysis`, detail: `${completed.aiAnalysis?.factChecks?.length || 0} researched checks, ${completed.aiAnalysis?.addedSignalCount || 0} bias cues, ${completed.aiAnalysis?.addedFrameCount || 0} frames` });
@@ -200,9 +204,37 @@ export async function analyzePageWithBackend(page: ExtractedPage, options: Analy
     }
   }
 
-  const analysis = attachBiasAssessment(localAnalysis, fallbackAssessment);
+  const analysis = attachOutletProfile(attachBiasAssessment(localAnalysis, fallbackAssessment), outletProfile);
   const withCoverage = attachOutletCoverage(analysis, await outletCoveragePromise);
   return aiFailureReason ? { ...withCoverage, aiFailureReason } as Analysis : withCoverage;
+}
+
+async function outletProfileFor(page: ExtractedPage, analysis: Analysis, options: AnalysisOptions): Promise<OutletProfile | undefined> {
+  if (analysis.contentType !== "article") return undefined;
+  const host = normalizeOutletHost(page.url);
+  if (!host) return undefined;
+  const startedAt = Date.now();
+  trace(options, { id: "outlet-profile", kind: "local", status: "running", title: "Outlet profile", detail: `Looking up ${host} in the bundled outlet dataset` });
+  const bundled = lookupBundledOutlet(host);
+  if (bundled) {
+    trace(options, { id: "outlet-profile", kind: "local", status: "completed", title: "Outlet profile", detail: `${bundled.name} found in the bundled outlet dataset`, durationMs: Date.now() - startedAt });
+    return bundled;
+  }
+  try {
+    const cached = await getCachedOutletProfile(host);
+    if (cached) {
+      trace(options, { id: "outlet-profile", kind: "local", status: "completed", title: "Outlet profile", detail: `${cached.name} restored from earlier AI outlet research`, durationMs: Date.now() - startedAt });
+      return clampPlacement(cached);
+    }
+  } catch {
+    // A cache read failure only skips reuse; the AI request path below can still research the outlet.
+  }
+  trace(options, { id: "outlet-profile", kind: "local", status: "completed", title: "Outlet profile", detail: "Outlet not in the bundled dataset; AI deep analysis can research it when enabled", durationMs: Date.now() - startedAt });
+  return undefined;
+}
+
+function attachOutletProfile(analysis: Analysis, outletProfile: OutletProfile | undefined): Analysis {
+  return outletProfile ? { ...analysis, outletProfile } as Analysis : analysis;
 }
 
 async function outletCoverageFor(page: ExtractedPage, analysis: Analysis, options: AnalysisOptions): Promise<OutletCoverageEstimate | undefined> {

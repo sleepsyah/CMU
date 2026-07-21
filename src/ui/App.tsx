@@ -55,6 +55,7 @@ import {
   signalFeedbackTarget
 } from "./components/DetectionFeedback";
 import { BiasProfileBand, BiasSignalChart } from "./components/InsightCharts";
+import { OutletProfileCard } from "./components/OutletProfileCard";
 
 type AppView = "analysis" | "saved";
 type AnalysisSection = "overview" | "language" | "voices" | "evidence";
@@ -727,6 +728,7 @@ function SourcesPanel({ analysis, trace, onShowSource }: { analysis: Analysis; t
         <p className="source-context-copy">{sourceContext(analysis)}</p>
         {/^(https?):\/\//.test(analysis.url) && <a className="source-context-link" href={analysis.url} target="_blank" rel="noreferrer"><LinkSimple size={14} />Open source</a>}
       </section>
+      <OutletProfileCard analysis={analysis} />
       <ScoreMethodCard analysis={analysis} />
       <OutletCoverageCard analysis={analysis} />
       <FeedbackEvaluationPanel />

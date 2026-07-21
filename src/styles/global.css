@@ -2810,6 +2810,209 @@ blockquote {
   text-underline-offset: 3px;
 }
 
+.outlet-profile {
+  gap: 9px;
+  --outlet-current: #1d4f9c;
+}
+
+.outlet-name {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.outlet-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 7px 12px;
+  margin: 0;
+}
+
+.outlet-facts dt {
+  color: var(--muted-warm);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.outlet-facts dd {
+  margin: 1px 0 0;
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.outlet-placement-headline {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.outlet-chart {
+  display: grid;
+  gap: 6px;
+}
+
+.outlet-chart-legend {
+  display: flex;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.outlet-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.outlet-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted-warm);
+}
+
+.outlet-swatch.is-current {
+  background: var(--outlet-current);
+}
+
+.outlet-chart-frame {
+  position: relative;
+}
+
+.outlet-chart-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.outlet-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.outlet-grid.is-mid {
+  stroke: var(--line-strong);
+}
+
+.outlet-tick {
+  fill: var(--muted);
+  font-size: 9px;
+}
+
+.outlet-axis-title {
+  fill: var(--muted-warm);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.outlet-dot {
+  fill: var(--muted-warm);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.outlet-dot.is-current {
+  fill: var(--outlet-current);
+}
+
+.outlet-dot-label {
+  fill: var(--text);
+  font-size: 10px;
+  font-weight: 650;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.outlet-hit {
+  fill: transparent;
+  cursor: default;
+}
+
+.outlet-hit:focus-visible {
+  outline: none;
+  stroke: color-mix(in srgb, var(--outlet-current) 55%, transparent);
+  stroke-width: 2;
+}
+
+.outlet-tooltip {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  gap: 1px;
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 3px 10px rgb(28 27 23 / 12%);
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 10px));
+  white-space: nowrap;
+}
+
+.outlet-tooltip strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.outlet-tooltip span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.outlet-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.outlet-table th,
+.outlet-table td {
+  padding: 3px 6px 3px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-weight: 500;
+}
+
+.outlet-table thead th {
+  color: var(--muted-warm);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.outlet-table tr.is-current th,
+.outlet-table tr.is-current td {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.outlet-citations {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.outlet-citations a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow-wrap: anywhere;
+  text-underline-offset: 3px;
+}
+
 .claim-list {
   display: grid;
   gap: 8px;

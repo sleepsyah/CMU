@@ -1,4 +1,4 @@
-import type { AiSettings, Analysis, AnalysisFinding, ArticleAnalysis, ArticleSource, AttributionEvent, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, SavedAnalysis, SourceEvidence } from "../types";
+import type { AiSettings, Analysis, AnalysisFinding, ArticleAnalysis, ArticleSource, AttributionEvent, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, OutletProfile, SavedAnalysis, SourceEvidence } from "../types";
 import { validateSourceDisplayName } from "./sources";
 
 const HISTORY_KEY = "ellipsis.savedAnalyses";
@@ -7,7 +7,9 @@ const AI_SETTINGS_KEY = "ellipsis.aiSettings";
 const LEGACY_STORAGE_PREFIX = ["un", "framed"].join("");
 const LEGACY_HISTORY_KEY = `${LEGACY_STORAGE_PREFIX}.savedAnalyses`;
 const LEGACY_FEEDBACK_KEY = `${LEGACY_STORAGE_PREFIX}.feedbackLogs`;
+const OUTLET_PROFILE_KEY = "ellipsis.outletProfiles";
 const MAX_HISTORY = 50;
+const MAX_OUTLET_PROFILES = 40;
 
 function confidenceLabel(score: number): ConfidenceLabel {
   if (score >= 75) return "High";
@@ -272,6 +274,20 @@ export async function logFeedback(feedback: FeedbackLog) {
   const next = [feedback, ...current].slice(0, 250);
   await writeValue(FEEDBACK_KEY, next);
   return next;
+}
+
+export async function getCachedOutletProfile(host: string): Promise<OutletProfile | undefined> {
+  if (!host) return undefined;
+  const profiles = await readValue<OutletProfile[]>(OUTLET_PROFILE_KEY, []);
+  if (!Array.isArray(profiles)) return undefined;
+  return profiles.find((profile) => profile?.host === host && profile.origin === "ai-research");
+}
+
+export async function cacheOutletProfile(profile: OutletProfile): Promise<void> {
+  if (!profile?.host || profile.origin !== "ai-research") return;
+  const current = await readValue<OutletProfile[]>(OUTLET_PROFILE_KEY, []);
+  const withoutHost = (Array.isArray(current) ? current : []).filter((item) => item?.host !== profile.host);
+  await writeValue(OUTLET_PROFILE_KEY, [profile, ...withoutHost].slice(0, MAX_OUTLET_PROFILES));
 }
 
 export async function getAiSettings(): Promise<AiSettings> {

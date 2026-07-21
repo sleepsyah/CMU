@@ -7,6 +7,7 @@ It shows:
 - a short summary;
 - possible political, gender, and ethnicity framing signals;
 - a multi-label framing profile and source-participation snapshot;
+- an outlet profile with where the outlet is based, who owns and funds it, and a factuality-versus-affiliation chart that places it among well-known reference outlets;
 - researched checks of material claims with cited sources when AI is enabled;
 - the exact passages behind its findings;
 - a few questions worth checking as you read.
@@ -62,6 +63,7 @@ For source development, `npm run native:install` registers the source-tree conne
 - **Low, moderate, or high** describes the strength of wording cues Ellipsis detected.
 - **No direct evidence found** means the article did not contain a source-matched cue for that category; Ellipsis shows no bar or score.
 - **Overall bias profile** summarizes the strongest detected article-level pattern with a cue-strength score and short narrative.
+- **Outlet profile** describes the publishing outlet itself — headquarters, ownership, funding, founding year, and medium — and places its overall record on a factuality-versus-affiliation chart. The placement synthesizes publicly available third-party assessments (media-research organizations, academic surveys, and public reference material); it describes the outlet's public assessment record, not this article, and it is not Ellipsis's own verdict on truth or trustworthiness. Major outlets come from a bundled reference dataset; when AI deep analysis is enabled, unknown outlets are researched with citations.
 - A low score does not prove neutrality.
 - A high score does not prove that the source is false.
 

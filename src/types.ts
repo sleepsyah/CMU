@@ -272,6 +272,41 @@ export interface OutletCoverageEstimate {
   note: string;
 }
 
+export type OutletProfileOrigin = "bundled-dataset" | "ai-research";
+
+export interface OutletCitation {
+  url: string;
+  label: string;
+}
+
+export interface OutletPlacement {
+  factuality: number;
+  affiliation: number;
+  note: string;
+}
+
+export interface OutletProfile {
+  host: string;
+  name: string;
+  origin: OutletProfileOrigin;
+  headquarters: string;
+  country: string;
+  ownership: string;
+  funding: string;
+  founded: string;
+  medium: string;
+  placement: OutletPlacement | null;
+  citations: OutletCitation[];
+  generatedAt: string;
+}
+
+export interface OutletReferencePoint {
+  name: string;
+  host: string;
+  factuality: number;
+  affiliation: number;
+}
+
 export interface BaseAnalysis {
   id: string;
   url: string;
@@ -290,6 +325,7 @@ export interface BaseAnalysis {
   backendBias?: BackendBiasAnalysis;
   biasProfile?: BiasProfile;
   outletCoverage?: OutletCoverageEstimate;
+  outletProfile?: OutletProfile;
   aiAnalysis?: AiAnalysis;
   aiFailureReason?: string;
 }

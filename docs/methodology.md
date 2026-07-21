@@ -45,6 +45,14 @@ Aliases are resolved after all blocks are processed. Resolution normalizes punct
 
 Each source card contains a short neutral description of what the article attributes to the source, the exact evidence passage, and a link back to that passage. Sources are ranked by the substance and clarity of their attribution, combined across repeated mentions, and capped at eight. This deterministic parser is deliberately conservative: ambiguous surname matches, pronouns without a unique named antecedent, and unclear grammatical subjects are omitted rather than guessed. It does not assign ideology, sentiment, agreement, balance, or fairness labels. Optional AI output cannot replace these source cards.
 
+## Outlet profile and placement chart
+
+For articles, Ellipsis profiles the publishing outlet itself alongside the article analysis. The profile reports where the outlet is headquartered, its country, ownership, funding model, founding year, and medium, and places the outlet's overall record on two scales: factuality (0-100, strength of its factual-reporting record) and affiliation (-100 left to 100 right). The chart plots the outlet among a fixed set of well-known reference outlets so the placement has context.
+
+Placements are a synthesis of publicly available third-party assessments — media-research organizations, academic surveys, and public reference material — describing the outlet's overall public record. They describe the outlet, never the analyzed article, and they are not Ellipsis's own verdict on whether the outlet or the article is true, neutral, or trustworthy. The card states this framing wherever a placement is shown, and outlet-specific caveats (state funding, ownership concentration, tabloid format) are carried in the placement note.
+
+The profile resolves in three steps. First, the normalized outlet host is matched against a bundled dataset of major international outlets compiled from public information; this works offline and without AI. Second, a previously AI-researched profile is restored from local extension storage when available. Third, when AI deep analysis is enabled and the outlet is still unknown, the provider researches the outlet with at most two focused searches and must return the facts, both scale placements, a caveat note, and one or two citations to the assessment sources it used; a researched profile without valid citations is discarded rather than displayed, and the provider is instructed to return nothing rather than guess. Researched profiles are cached locally so repeat visits to the same outlet do not repeat the research.
+
 ## Optional Codex analysis
 
 1. Send the extracted source, title, source name, and content type through Chrome Native Messaging when the user has enabled AI.

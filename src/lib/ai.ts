@@ -1,4 +1,6 @@
 import { cleanReadableSourceText, confidenceLabel, FRAME_LABELS } from "./analysis";
+import { clampPlacement, normalizeOutletHost, OUTLET_PLACEMENT_DISCLAIMER } from "./outlet";
+import { cacheOutletProfile } from "./storage";
 import { cleanOverallBiasSummary } from "./summary";
 import type {
   AiAnalysis,
@@ -17,7 +19,8 @@ import type {
   FactCheck,
   ArticleGenre,
   FrameLabel,
-  FrameSignal
+  FrameSignal,
+  OutletProfile
 } from "../types";
 
 interface AiPayload {
@@ -68,6 +71,22 @@ interface AiPayload {
       evidence: string;
     }>;
   }>;
+  outlet_profile?: {
+    name: string;
+    headquarters: string;
+    country: string;
+    ownership: string;
+    funding: string;
+    founded: string;
+    medium: string;
+    factuality: number;
+    affiliation: number;
+    note: string;
+    citations: Array<{
+      url: string;
+      label: string;
+    }>;
+  } | null;
   _trace?: {
     reasoning_summaries?: string[];
     runtime_ms?: number;
@@ -116,17 +135,23 @@ export async function enhanceAnalysisWithAi(
   supportingAssessment?: BackendBiasAnalysis
 ): Promise<Analysis> {
   const readableText = cleanReadableSourceText(page.text);
+  const researchHost = analysis.contentType === "article" && !analysis.outletProfile ? normalizeOutletHost(page.url) : "";
   const rawPayload = await nativeRequest<unknown>("analyze", provider, {
     title: analysis.pageTitle,
     source_name: analysis.sourceName,
     content_type: analysis.contentType,
     trace_id: traceId,
     raw_text: readableText,
-    local_model_context: supportingAssessment ? modelSupportForAi(supportingAssessment) : undefined
+    local_model_context: supportingAssessment ? modelSupportForAi(supportingAssessment) : undefined,
+    outlet_research: researchHost ? { host: researchHost, name: analysis.sourceName } : undefined
   });
   const payload = normalizeAiPayload(rawPayload, analysis);
   if (!payload) throw new Error(`${providerLabel(provider)} did not return a usable structured analysis. The local result is still available.`);
-  return applyAiPayload(analysis, readableText, payload, provider, supportingAssessment);
+  const enhanced = applyAiPayload(analysis, readableText, payload, provider, supportingAssessment);
+  if (researchHost && enhanced.outletProfile?.origin === "ai-research") {
+    cacheOutletProfile(enhanced.outletProfile).catch(() => undefined);
+  }
+  return enhanced;
 }
 
 export function checkCodexConnection() {
@@ -322,6 +347,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     analyzedAt: new Date().toISOString()
   };
 
+  const outletProfile = analysis.outletProfile || aiOutletProfile(payload.outlet_profile, analysis);
   const sharedUpdates = {
     summary: completedSummary,
     summaryEvidenceIds,
@@ -335,6 +361,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     evidence: dedupeEvidence(evidence),
     backendBias: aiBiasAssessment(aiSignals, provider),
     vocabularyTerms: importantTerms.map((item) => ({ term: item.term, meaning: item.meaning, evidenceIds: item.evidenceIds })),
+    ...(outletProfile ? { outletProfile } : {}),
     aiAnalysis
   };
 
@@ -387,6 +414,43 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     ]).slice(0, 6),
     importantTerms
   };
+}
+
+function aiOutletProfile(value: AiPayload["outlet_profile"], analysis: Analysis): OutletProfile | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const host = normalizeOutletHost(analysis.url);
+  const name = bounded(value.name, 120);
+  const headquarters = bounded(value.headquarters, 160);
+  const country = bounded(value.country, 80);
+  if (!host || !name || !headquarters || !country) return undefined;
+  if (!Number.isFinite(value.factuality) || !Number.isFinite(value.affiliation)) return undefined;
+  const citations = (Array.isArray(value.citations) ? value.citations : [])
+    .map((citation) => {
+      const url = validWebUrl(citation?.url);
+      if (!url) return null;
+      return { url, label: bounded(citation.label, 140) || new URL(url).hostname };
+    })
+    .filter((citation): citation is OutletProfile["citations"][number] => Boolean(citation))
+    .slice(0, 2);
+  if (!citations.length) return undefined;
+  return clampPlacement({
+    host,
+    name,
+    origin: "ai-research",
+    headquarters,
+    country,
+    ownership: bounded(value.ownership, 200) || "Not established",
+    funding: bounded(value.funding, 200) || "Not established",
+    founded: bounded(value.founded, 40) || "Unknown",
+    medium: bounded(value.medium, 80) || "News outlet",
+    placement: {
+      factuality: value.factuality,
+      affiliation: value.affiliation,
+      note: bounded(value.note, 320) || OUTLET_PLACEMENT_DISCLAIMER
+    },
+    citations,
+    generatedAt: new Date().toISOString()
+  });
 }
 
 function aiBiasAssessment(signals: BiasSignal[], provider: AiProvider): BackendBiasAnalysis {
@@ -524,6 +588,7 @@ function normalizeAiPayload(value: unknown, analysis: Analysis): AiPayload | nul
     findings: objectItems(input.findings) as unknown as AiPayload["findings"],
     important_terms: objectItems(input.important_terms) as unknown as AiPayload["important_terms"],
     fact_checks: objectItems(input.fact_checks) as unknown as AiPayload["fact_checks"],
+    outlet_profile: input.outlet_profile && typeof input.outlet_profile === "object" ? input.outlet_profile as AiPayload["outlet_profile"] : null,
     ...(traceInput ? {
       _trace: {
         reasoning_summaries: stringItems(traceInput.reasoning_summaries),
