@@ -132,7 +132,7 @@ export const OUTPUT_SCHEMA = {
     outlet_profile: {
       type: ["object", "null"],
       additionalProperties: false,
-      required: ["name", "headquarters", "country", "ownership", "funding", "founded", "medium", "factuality", "affiliation", "note", "citations"],
+      required: ["name", "headquarters", "country", "ownership", "funding", "founded", "medium", "note", "citations"],
       properties: {
         name: { type: "string", minLength: 1, maxLength: 120 },
         headquarters: { type: "string", minLength: 1, maxLength: 160 },
@@ -141,8 +141,6 @@ export const OUTPUT_SCHEMA = {
         funding: { type: "string", minLength: 1, maxLength: 200 },
         founded: { type: "string", minLength: 1, maxLength: 40 },
         medium: { type: "string", minLength: 1, maxLength: 80 },
-        factuality: { type: "number", minimum: 0, maximum: 100 },
-        affiliation: { type: "number", minimum: -100, maximum: 100 },
         note: { type: "string", minLength: 3, maxLength: 320 },
         citations: {
           type: "array",
@@ -225,7 +223,7 @@ export function buildAnalysisPrompt(input) {
     "Use web research to test every externally verifiable factual statement that materially affects the analysis, grouping related statements into at most three claim checks. Each check needs an exact source_quote, a supported/contradicted/unresolved/context_needed assessment, and one or two concise web citations.",
     "confidence_score and confidence_reason describe evidence coverage for internal validation; overall_bias describes the article's bias profile shown to the user.",
     outletResearch
-      ? `Additionally profile the publishing outlet itself (outlet_research gives its host${outletResearch.name ? " and name" : ""}). Using at most two focused searches of public reference material and published media-research assessments, report where the outlet is headquartered, its country, owner, funding model, founding year, and medium, then place its overall record on two scales: factuality 0-100 (strength of its factual-reporting record) and affiliation -100 (left) to 100 (right). These describe the outlet's public assessment record, not this article, and never Ellipsis's own verdict on truth or trustworthiness. Write note as one sentence naming the kind of assessments the placement synthesizes plus any ownership or state-funding caveat, and include one or two citations to the assessment sources used. If research cannot establish the outlet's record, set outlet_profile to null rather than guessing.`
+      ? `Additionally profile the publishing outlet itself (outlet_research gives its host${outletResearch.name ? " and name" : ""}). Using at most two focused searches of public reference material, report only verifiable facts about the organization: where it is headquartered, its country, owner, funding model, founding year, and medium. Do NOT rate the outlet's factual accuracy, quality, bias, or political leaning on any scale — Ellipsis takes those placements from published research datasets, and an estimate here would be presented alongside measured values as if it were one. Write note as one sentence covering any ownership or state-funding caveat a reader should know, and include one or two citations for the facts reported. If research cannot establish these facts, set outlet_profile to null rather than guessing.`
       : "outlet_research is null, so do not research the publishing outlet and set outlet_profile to null.",
     "Return only JSON matching the provided schema.",
     `SOURCE_DATA: ${JSON.stringify(source)}`

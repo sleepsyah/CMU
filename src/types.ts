@@ -27,6 +27,8 @@ export interface ExtractedPage {
   title: string;
   url: string;
   sourceName: string;
+  /** Site icon the page declares, used to mark this outlet on the placement chart. Absent for pasted text. */
+  iconUrl?: string;
   author: string;
   publishedAt: string;
   text: string;
@@ -279,9 +281,19 @@ export interface OutletCitation {
   label: string;
 }
 
+/**
+ * Both scores come from published datasets, never from Ellipsis or from AI
+ * research. An outlet absent from those datasets has a null placement rather
+ * than an estimated one.
+ *
+ * `quality` is 0-100, from the Lin et al. (2023) principal component across six
+ * expert rating sets. `partisanship` is -100 (shared mainly by registered
+ * Democrats) to +100 (Republicans), from the Yang et al. (2025) DomainDemo
+ * panel. Partisanship describes a US sharing audience, not editorial stance.
+ */
 export interface OutletPlacement {
-  factuality: number;
-  affiliation: number;
+  quality: number;
+  partisanship: number;
   note: string;
 }
 
@@ -295,6 +307,8 @@ export interface OutletProfile {
   funding: string;
   founded: string;
   medium: string;
+  /** Packaged asset path for bundled outlets, page-declared URL for researched ones. */
+  icon: string | null;
   placement: OutletPlacement | null;
   citations: OutletCitation[];
   generatedAt: string;
@@ -303,8 +317,9 @@ export interface OutletProfile {
 export interface OutletReferencePoint {
   name: string;
   host: string;
-  factuality: number;
-  affiliation: number;
+  quality: number;
+  partisanship: number;
+  icon: string | null;
 }
 
 export interface BaseAnalysis {

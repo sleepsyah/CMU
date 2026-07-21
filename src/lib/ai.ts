@@ -79,8 +79,6 @@ interface AiPayload {
     funding: string;
     founded: string;
     medium: string;
-    factuality: number;
-    affiliation: number;
     note: string;
     citations: Array<{
       url: string;
@@ -147,7 +145,7 @@ export async function enhanceAnalysisWithAi(
   });
   const payload = normalizeAiPayload(rawPayload, analysis);
   if (!payload) throw new Error(`${providerLabel(provider)} did not return a usable structured analysis. The local result is still available.`);
-  const enhanced = applyAiPayload(analysis, readableText, payload, provider, supportingAssessment);
+  const enhanced = applyAiPayload(analysis, readableText, payload, provider, supportingAssessment, page.iconUrl || "");
   if (researchHost && enhanced.outletProfile?.origin === "ai-research") {
     cacheOutletProfile(enhanced.outletProfile).catch(() => undefined);
   }
@@ -168,7 +166,7 @@ export function enhanceAnalysisWithCodex(analysis: Analysis, page: ExtractedPage
   return enhanceAnalysisWithAi(analysis, page, "codex", traceId);
 }
 
-function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPayload, provider: AiProvider, supportingAssessment?: BackendBiasAnalysis): Analysis {
+function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPayload, provider: AiProvider, supportingAssessment?: BackendBiasAnalysis, pageIcon = ""): Analysis {
   const providerName = providerLabel(provider);
   const completedSummary = completeSummary(payload.summary, 500) || analysis.summary;
   const completedBiasSummary = cleanOverallBiasSummary(
@@ -347,7 +345,7 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
     analyzedAt: new Date().toISOString()
   };
 
-  const outletProfile = analysis.outletProfile || aiOutletProfile(payload.outlet_profile, analysis);
+  const outletProfile = analysis.outletProfile || aiOutletProfile(payload.outlet_profile, analysis, pageIcon);
   const sharedUpdates = {
     summary: completedSummary,
     summaryEvidenceIds,
@@ -416,14 +414,13 @@ function applyAiPayload(analysis: Analysis, sourceText: string, payload: AiPaylo
   };
 }
 
-function aiOutletProfile(value: AiPayload["outlet_profile"], analysis: Analysis): OutletProfile | undefined {
+function aiOutletProfile(value: AiPayload["outlet_profile"], analysis: Analysis, pageIcon: string): OutletProfile | undefined {
   if (!value || typeof value !== "object") return undefined;
   const host = normalizeOutletHost(analysis.url);
   const name = bounded(value.name, 120);
   const headquarters = bounded(value.headquarters, 160);
   const country = bounded(value.country, 80);
   if (!host || !name || !headquarters || !country) return undefined;
-  if (!Number.isFinite(value.factuality) || !Number.isFinite(value.affiliation)) return undefined;
   const citations = (Array.isArray(value.citations) ? value.citations : [])
     .map((citation) => {
       const url = validWebUrl(citation?.url);
@@ -433,7 +430,10 @@ function aiOutletProfile(value: AiPayload["outlet_profile"], analysis: Analysis)
     .filter((citation): citation is OutletProfile["citations"][number] => Boolean(citation))
     .slice(0, 2);
   if (!citations.length) return undefined;
-  return clampPlacement({
+  // Researched outlets get facts and citations but never a placement: the two
+  // chart axes are dataset measurements, and an AI estimate of them would be a
+  // guess wearing the same axes as measured values.
+  return {
     host,
     name,
     origin: "ai-research",
@@ -443,14 +443,11 @@ function aiOutletProfile(value: AiPayload["outlet_profile"], analysis: Analysis)
     funding: bounded(value.funding, 200) || "Not established",
     founded: bounded(value.founded, 40) || "Unknown",
     medium: bounded(value.medium, 80) || "News outlet",
-    placement: {
-      factuality: value.factuality,
-      affiliation: value.affiliation,
-      note: bounded(value.note, 320) || OUTLET_PLACEMENT_DISCLAIMER
-    },
+    icon: validWebUrl(pageIcon) || null,
+    placement: null,
     citations,
     generatedAt: new Date().toISOString()
-  });
+  };
 }
 
 function aiBiasAssessment(signals: BiasSignal[], provider: AiProvider): BackendBiasAnalysis {

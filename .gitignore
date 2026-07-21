@@ -14,3 +14,4 @@ backend/.hf-cache/
 .env.*
 !.env.example
 npm-debug.log*
+data/.cache/

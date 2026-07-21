@@ -459,6 +459,22 @@ function sourceNameFromLocation() {
   return (countryCodeSuffix ? parts.at(-3) : parts.at(-2)) || parts[0] || host;
 }
 
+// The outlet profile marks this outlet on its chart with the site's own icon.
+// Reference outlets ship a packaged icon; the page being read is arbitrary, so
+// read whatever it declares and fall back to the conventional path.
+function siteIconUrl() {
+  const links = Array.from(document.querySelectorAll('link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]'));
+  const scored = links
+    .map((link) => ({
+      href: link.href,
+      // Prefer something near 64px: large enough to stay sharp, not a 512px asset.
+      distance: Math.abs((Number.parseInt(link.getAttribute("sizes") || "", 10) || 32) - 64)
+    }))
+    .filter((candidate) => /^https?:/.test(candidate.href))
+    .sort((a, b) => a.distance - b.distance);
+  return scored[0]?.href || `${location.origin}/favicon.ico`;
+}
+
 function canonicalUrl() {
   const value = document.querySelector('link[rel="canonical"]')?.href;
   return /^https?:/.test(value || "") ? value : location.href;
@@ -528,6 +544,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       title,
       url: canonicalUrl(),
       sourceName: sourceNameFromLocation(),
+      iconUrl: siteIconUrl(),
       author: authorName(),
       publishedAt: publishedAt(),
       text,

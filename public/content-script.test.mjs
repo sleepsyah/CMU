@@ -42,3 +42,45 @@ describe("article passage matching", () => {
     expect(Array.from(matching.excerptSentences("One. Two. Three. Four.", 3))).toEqual(["One.", "Two.", "Three."]);
   });
 });
+
+function loadSiteIcon(links, origin = "https://example.com") {
+  const source = readFileSync(new URL("./content-script.js", import.meta.url), "utf8");
+  const sandbox = {
+    chrome: { runtime: { onMessage: { addListener() {} } } },
+    location: { origin },
+    document: {
+      // Mirrors the selector in siteIconUrl: any link whose rel names an icon.
+      querySelectorAll: () =>
+        links
+          .filter((link) => /icon/.test(link.rel))
+          .map((link) => ({
+            href: link.href,
+            getAttribute: (name) => (name === "sizes" ? link.sizes ?? null : null)
+          }))
+    }
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(`${source}\n;globalThis.__siteIconUrl = siteIconUrl;`, sandbox);
+  return sandbox.__siteIconUrl();
+}
+
+describe("site icon extraction", () => {
+  it("prefers the declared icon closest to 64px", () => {
+    expect(
+      loadSiteIcon([
+        { rel: "icon", href: "https://example.com/tiny.png", sizes: "16x16" },
+        { rel: "icon", href: "https://example.com/right.png", sizes: "64x64" },
+        { rel: "apple-touch-icon", href: "https://example.com/huge.png", sizes: "512x512" }
+      ])
+    ).toBe("https://example.com/right.png");
+  });
+
+  it("falls back to the conventional path when the page declares no icon", () => {
+    expect(loadSiteIcon([])).toBe("https://example.com/favicon.ico");
+  });
+
+  it("ignores non-http icon declarations such as inline data URIs", () => {
+    expect(loadSiteIcon([{ rel: "icon", href: "data:image/png;base64,AAAA", sizes: "64x64" }]))
+      .toBe("https://example.com/favicon.ico");
+  });
+});

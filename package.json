@@ -14,7 +14,8 @@
     "preview": "astro preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "data:outlets": "node scripts/build-outlet-data.mjs"
   },
   "dependencies": {
     "@astrojs/react": "^6.0.1",

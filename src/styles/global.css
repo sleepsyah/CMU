@@ -2858,30 +2858,6 @@ blockquote {
   gap: 6px;
 }
 
-.outlet-chart-legend {
-  display: flex;
-  gap: 14px;
-  color: var(--muted);
-  font-size: 10.5px;
-}
-
-.outlet-chart-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.outlet-swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted-warm);
-}
-
-.outlet-swatch.is-current {
-  background: var(--outlet-current);
-}
-
 .outlet-chart-frame {
   position: relative;
 }
@@ -2913,24 +2889,48 @@ blockquote {
   text-transform: uppercase;
 }
 
-.outlet-dot {
-  fill: var(--muted-warm);
-  stroke: var(--surface);
+.outlet-axis-end {
+  fill: var(--muted);
+  font-size: 8.5px;
+  letter-spacing: 0.01em;
+}
+
+/* Reference outlets sit back so the analysed outlet reads first. */
+.outlet-marker {
+  opacity: 0.72;
+}
+
+.outlet-marker.is-current {
+  opacity: 1;
+}
+
+.outlet-marker-bg {
+  fill: var(--surface);
+}
+
+.outlet-marker-ring {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted-warm) 45%, transparent);
+  stroke-width: 1;
+}
+
+.outlet-marker.is-current .outlet-marker-ring {
+  stroke: var(--outlet-current);
   stroke-width: 2;
 }
 
-.outlet-dot.is-current {
+.outlet-monogram-bg {
+  fill: var(--muted-warm);
+}
+
+.outlet-marker.is-current .outlet-monogram-bg {
   fill: var(--outlet-current);
 }
 
-.outlet-dot-label {
-  fill: var(--text);
-  font-size: 10px;
-  font-weight: 650;
-  paint-order: stroke;
-  stroke: var(--surface);
-  stroke-width: 3;
-  stroke-linejoin: round;
+.outlet-monogram {
+  fill: var(--surface);
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .outlet-hit {
@@ -3003,6 +3003,14 @@ blockquote {
   display: grid;
   gap: 5px;
   font-size: 11px;
+  margin-top: 8px;
+}
+
+.outlet-citations-label {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .outlet-citations a {

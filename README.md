@@ -7,7 +7,7 @@ It shows:
 - a short summary;
 - possible political, gender, and ethnicity framing signals;
 - a multi-label framing profile and source-participation snapshot;
-- an outlet profile with where the outlet is based, who owns and funds it, and a factuality-versus-affiliation chart that places it among well-known reference outlets;
+- an outlet profile with where the outlet is based, who owns and funds it, and a chart placing it among reference outlets by rated journalistic quality and audience partisanship, using published research datasets;
 - researched checks of material claims with cited sources when AI is enabled;
 - the exact passages behind its findings;
 - a few questions worth checking as you read.
@@ -63,7 +63,11 @@ For source development, `npm run native:install` registers the source-tree conne
 - **Low, moderate, or high** describes the strength of wording cues Ellipsis detected.
 - **No direct evidence found** means the article did not contain a source-matched cue for that category; Ellipsis shows no bar or score.
 - **Overall bias profile** summarizes the strongest detected article-level pattern with a cue-strength score and short narrative.
-- **Outlet profile** describes the publishing outlet itself — headquarters, ownership, funding, founding year, and medium — and places its overall record on a factuality-versus-affiliation chart. The placement synthesizes publicly available third-party assessments (media-research organizations, academic surveys, and public reference material); it describes the outlet's public assessment record, not this article, and it is not Ellipsis's own verdict on truth or trustworthiness. Major outlets come from a bundled reference dataset; when AI deep analysis is enabled, unknown outlets are researched with citations.
+- **Outlet profile** describes the publishing outlet itself — headquarters, ownership, funding, founding year, and medium — and charts it against reference outlets on two axes taken from published research datasets, never from Ellipsis's own judgement:
+  - **Rated quality** (vertical) is the `pc1` score from [Lin et al. (2023), *PNAS Nexus*](https://doi.org/10.1093/pnasnexus/pgad286), a principal component across six expert rating sets covering 11,520 domains.
+  - **Audience partisanship** (horizontal) is the `leaning_score` from [Yang et al. (2025), *Scientific Data*](https://doi.org/10.1038/s41597-025-05604-6), derived from 1.5M Twitter users matched to US voter records across 129,127 domains.
+
+  This axis measures **who shares an outlet, not what it argues**. Wire services sit left of centre because US Democrats share them more, and non-US outlets reflect their American audience rather than their domestic politics — so the labels say "shared more by Democrats", never "left". Outlets missing from the datasets are profiled without a placement. When AI deep analysis is enabled, unknown outlets get researched facts with citations, but never an estimated score. See [docs/methodology.md](docs/methodology.md#outlet-profile-and-placement-chart) for the full treatment.
 - A low score does not prove neutrality.
 - A high score does not prove that the source is false.
 

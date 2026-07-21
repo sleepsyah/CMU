@@ -47,11 +47,40 @@ Each source card contains a short neutral description of what the article attrib
 
 ## Outlet profile and placement chart
 
-For articles, Ellipsis profiles the publishing outlet itself alongside the article analysis. The profile reports where the outlet is headquartered, its country, ownership, funding model, founding year, and medium, and places the outlet's overall record on two scales: factuality (0-100, strength of its factual-reporting record) and affiliation (-100 left to 100 right). The chart plots the outlet among a fixed set of well-known reference outlets so the placement has context.
+For articles, Ellipsis profiles the publishing outlet itself alongside the article analysis. The profile reports where the outlet is headquartered, its country, ownership, funding model, founding year, and medium, and plots the outlet on a two-axis chart among a fixed set of reference outlets.
 
-Placements are a synthesis of publicly available third-party assessments — media-research organizations, academic surveys, and public reference material — describing the outlet's overall public record. They describe the outlet, never the analyzed article, and they are not Ellipsis's own verdict on whether the outlet or the article is true, neutral, or trustworthy. The card states this framing wherever a placement is shown, and outlet-specific caveats (state funding, ownership concentration, tabloid format) are carried in the placement note.
+### Where the two axes come from
 
-The profile resolves in three steps. First, the normalized outlet host is matched against a bundled dataset of major international outlets compiled from public information; this works offline and without AI. Second, a previously AI-researched profile is restored from local extension storage when available. Third, when AI deep analysis is enabled and the outlet is still unknown, the provider researches the outlet with at most two focused searches and must return the facts, both scale placements, a caveat note, and one or two citations to the assessment sources it used; a researched profile without valid citations is discarded rather than displayed, and the provider is instructed to return nothing rather than guess. Researched profiles are cached locally so repeat visits to the same outlet do not repeat the research.
+Neither axis is Ellipsis's own judgement. Both are joined from published, openly available research datasets, and an outlet absent from them is shown without a placement rather than with an estimated one.
+
+**Vertical axis — rated journalistic quality (0-100).** The `pc1` score from Lin et al. (2023), the first principal component across six independent expert rating sets (including Ad Fontes Media, Media Bias/Fact Check, and NewsGuard-derived ratings), covering 11,520 domains. The paper's finding is that these rating sets correlate highly with one another, so the component is a more stable signal than any single rater.
+
+> Lin, H., Lasser, J., Lewandowsky, S., Cole, R., Gully, A., Rand, D. G., & Pennycook, G. (2023). High level of correspondence across different news domain quality rating sets. *PNAS Nexus*, 2(9), pgad286. <https://doi.org/10.1093/pnasnexus/pgad286>
+
+**Horizontal axis — US audience partisanship (-100 to +100).** The `leaning_score` from the DomainDemo derived metrics (Yang et al., 2025), computed from a panel of over 1.5 million Twitter/X users matched to US voter-registration records, covering 129,127 domains. Negative means the domain was shared mainly by registered Democrats, positive by registered Republicans.
+
+> Yang, K.-C., Goel, P., Quintana-Mathé, A., Horgan, L., McCabe, S. D., Grinberg, N., Joseph, K., & Lazer, D. (2025). DomainDemo: a dataset of domain-sharing activities among different demographic groups on Twitter. *Scientific Data*, 12(1), 1251. <https://doi.org/10.1038/s41597-025-05604-6>
+
+### Reading the horizontal axis correctly
+
+The partisanship axis measures **who shares an outlet, not what the outlet argues**. Two consequences are visible on the chart and are stated in the interface rather than corrected away:
+
+- **The distribution sits left of zero.** Wire services land near -22, close to the New York Times, because US Democrats share them more often — not because they report from the left. Ellipsis therefore labels this axis by sharing behaviour ("shared more by Democrats") and never as "left", "right", or "centrist".
+- **Non-US outlets reflect their American audience.** Because the panel is a US voter file, British right-leaning papers score near zero or negative: they are read in the US by a different population than at home. Profiles for outlets based outside the United States carry an explicit caveat saying so.
+
+Placements describe the outlet, never the analyzed article, and are not a verdict on whether either is true or trustworthy. Outlet-specific caveats (state funding, ownership concentration) are carried in the placement note.
+
+Each outlet is drawn as its own site icon. Some reference outlets land within a few pixels of each other — the two wire services differ by about 3px, NPR and The Economist by about 1px — which is illegible at icon size, so overlapping markers are nudged apart by up to roughly 10px. The analyzed outlet is always held at its true position, and the tooltip and the "view placements as a table" disclosure report exact values for every outlet.
+
+### How a profile resolves
+
+First, the normalized outlet host is matched against the bundled dataset; this works offline and without AI. Second, a previously AI-researched profile is restored from local extension storage when available. Third, when AI deep analysis is enabled and the outlet is still unknown, the provider researches it with at most two focused searches.
+
+AI research returns **descriptive facts and citations only** — headquarters, ownership, funding, founding year, medium. It is explicitly instructed not to rate quality, accuracy, bias, or leaning, because such an estimate would appear on the same axes as measured values and be indistinguishable from them. A researched profile without valid citations is discarded rather than displayed. Researched profiles are cached locally so repeat visits do not repeat the research.
+
+### Regenerating the data
+
+`npm run data:outlets` re-downloads both datasets, re-joins them against the curated outlet metadata in `data/outlets.json`, refetches reference-outlet icons, and rewrites `src/lib/outlet-data.generated.ts`. The generated file is committed so the extension builds without network access. Editorial metadata is hand-maintained; scores are never hand-edited.
 
 ## Optional Codex analysis
 
