@@ -1,0 +1,17 @@
+{
+  "name": "native-host",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@openai/codex": "^0.144.6",
+    "@openai/codex-sdk": "^0.144.6"
+  }
+}
