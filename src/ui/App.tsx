@@ -21,16 +21,23 @@ import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyPastedText, confidenceLabel } from "../lib/analysis";
 import { beginAiLogin, checkAiConnection, subscribeAiProgress } from "../lib/ai";
+import { syncSavedArticleIfEnabled } from "../lib/articleSync";
 import { analyzePageWithBackend, biasProfileFromAssessment } from "../lib/backend";
 import { createManualPage, extractActivePage, highlightActivePagePassage } from "../lib/chrome";
+import { confirmSync, getPendingDigest } from "../lib/digest";
 import {
   clearSavedAnalyses,
   deleteSavedAnalysis,
   getAiSettings,
+  getArticleSyncSettings,
   getSavedAnalyses,
+  getUnframedConnection,
   saveAiSettings,
-  saveAnalysis
+  saveAnalysis,
+  saveArticleSyncSettings,
+  saveUnframedToken
 } from "../lib/storage";
+import { digestPayloadFromPending, postDigest } from "../lib/unframedApi";
 import { fetchPageFromUrl, normalizeWebUrl } from "../lib/url";
 import type {
   Analysis,
@@ -41,11 +48,13 @@ import type {
   AiProvider,
   AiSettings,
   ArticleGenre,
+  ArticleSyncSettings,
   BillAnalysis,
   ContentType,
   ExtractedPage,
   FactCheckStatus,
-  SavedAnalysis
+  SavedAnalysis,
+  UnframedConnection
 } from "../types";
 import {
   DetectionFeedbackControl,
@@ -54,6 +63,7 @@ import {
   perspectiveFeedbackTarget,
   signalFeedbackTarget
 } from "./components/DetectionFeedback";
+import { DashboardConnectBanner, DashboardSyncStatus } from "./components/DashboardConnect";
 import { BiasProfileBand, BiasSignalChart } from "./components/InsightCharts";
 import { OutletProfileCard } from "./components/OutletProfileCard";
 
@@ -908,12 +918,17 @@ function EvidenceList({ analysis }: { analysis: Analysis }) {
   );
 }
 
-function HistoryView({ saved, onOpen, onDelete, onClear }: { saved: SavedAnalysis[]; onOpen: (analysis: Analysis) => void; onDelete: (id: string) => void; onClear: () => void }) {
+function HistoryView({ saved, onOpen, onDelete, onClear, onOpenSync }: { saved: SavedAnalysis[]; onOpen: (analysis: Analysis) => void; onDelete: (id: string) => void; onClear: () => void; onOpenSync: () => void }) {
   return (
     <section className="surface history-view">
+      <DashboardSyncStatus />
+      <DashboardConnectBanner onConnect={onOpenSync} />
       <div className="history-heading">
         <div><h1>Saved</h1><p>{saved.length} of 50 analyses stored on this device.</p></div>
-        {saved.length > 0 && <button className="secondary-button" type="button" onClick={onClear}>Clear all</button>}
+        <div className="history-heading-actions">
+          <button className="text-button" type="button" onClick={onOpenSync}><LinkSimple size={14} /> Unframed sync</button>
+          {saved.length > 0 && <button className="secondary-button" type="button" onClick={onClear}>Clear all</button>}
+        </div>
       </div>
       {saved.length ? (
         <ul className="history-list">
@@ -1119,6 +1134,109 @@ function AiSettingsDialog({
   );
 }
 
+const ARTICLE_SYNC_CONSENT_TEXT =
+  "Sync saved article analyses to your Unframed dashboard? Each saved article's title, URL, bias scores, framing notes, and summary will leave your browser and be stored on your account. You can turn this off or delete synced articles from the dashboard at any time.";
+
+function UnframedSyncDialog({
+  open,
+  connection,
+  articleSync,
+  onClose,
+  onSaveToken,
+  onSaveArticleSync
+}: {
+  open: boolean;
+  connection: UnframedConnection;
+  articleSync: ArticleSyncSettings;
+  onClose: () => void;
+  onSaveToken: (token: string | null) => Promise<void>;
+  onSaveArticleSync: (settings: ArticleSyncSettings) => Promise<void>;
+}) {
+  const [draftToken, setDraftToken] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraftToken("");
+  }, [open]);
+
+  if (!open) return null;
+
+  async function connectToken(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draftToken.trim()) return;
+    setSaving(true);
+    try {
+      await onSaveToken(draftToken.trim());
+      setDraftToken("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function disconnect() {
+    if (!window.confirm("Disconnect this device from your Unframed account? Saved-article syncing will stop.")) return;
+    await onSaveToken(null);
+    await onSaveArticleSync({ enabled: false, consentedAt: null });
+  }
+
+  async function toggleArticleSync(checked: boolean) {
+    if (!checked) {
+      await onSaveArticleSync({ ...articleSync, enabled: false });
+      return;
+    }
+    if (!window.confirm(ARTICLE_SYNC_CONSENT_TEXT)) return;
+    await onSaveArticleSync({ enabled: true, consentedAt: new Date().toISOString() });
+  }
+
+  return (
+    <div className="settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="unframed-sync-title">
+        <header className="settings-header">
+          <div><LinkSimple size={17} /><strong id="unframed-sync-title">Unframed sync</strong></div>
+          <button className="topbar-icon-button" type="button" aria-label="Close Unframed sync settings" onClick={onClose}><X size={17} /></button>
+        </header>
+        <div className="settings-form">
+          {connection.token ? (
+            <div className="managed-note"><ShieldCheck size={17} /><span><strong>Connected to Unframed</strong><small>This device can sync your weekly reading digest and, if enabled below, saved article analyses.</small></span></div>
+          ) : (
+            <form className="field" onSubmit={connectToken}>
+              <label htmlFor="unframed-token">Access token</label>
+              <input
+                id="unframed-token"
+                type="password"
+                autoComplete="off"
+                placeholder="Paste the token from your Unframed dashboard settings"
+                value={draftToken}
+                onChange={(event) => setDraftToken(event.target.value)}
+              />
+              <p className="helper">Generate one at unframed.co/dashboard/settings, then paste it here.</p>
+              <button className="primary-button" type="submit" disabled={saving || !draftToken.trim()}>{saving ? "Connecting..." : "Connect"}</button>
+            </form>
+          )}
+
+          {connection.token && (
+            <fieldset className="mode-options">
+              <legend>Saved article sync</legend>
+              <label className="compact-switch" title="Sync saved article analyses">
+                <input type="checkbox" role="switch" checked={articleSync.enabled} onChange={(event) => void toggleArticleSync(event.target.checked)} />
+                <i aria-hidden="true" />
+                <span>Sync saved articles to my dashboard</span>
+              </label>
+              <p className="helper">Off by default. Article-level data (title, URL, bias scores, framing notes, summary) only leaves your browser once you turn this on.</p>
+            </fieldset>
+          )}
+
+          <footer className="settings-footer">
+            {connection.token && <button className="secondary-button" type="button" onClick={() => void disconnect()}>Disconnect</button>}
+            <button className="primary-button" type="button" onClick={onClose}>Done</button>
+          </footer>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function StartView({ loading, onAnalyzePage, onAnalyzeUrl, onAnalyzeText }: {
   loading: boolean;
   onAnalyzePage: () => void;
@@ -1211,6 +1329,9 @@ export default function App() {
   const [suggestAiEnabled, setSuggestAiEnabled] = useState(false);
   const [sourcePage, setSourcePage] = useState<ExtractedPage | null>(null);
   const [analysisTrace, setAnalysisTrace] = useState<AnalysisTraceEvent[]>([]);
+  const [unframedConnection, setUnframedConnection] = useState<UnframedConnection>({ token: null, connectedAt: null });
+  const [articleSync, setArticleSync] = useState<ArticleSyncSettings>({ enabled: false, consentedAt: null });
+  const [unframedSyncOpen, setUnframedSyncOpen] = useState(false);
   const activeTraceId = useRef<string | null>(null);
   const analysisInFlight = useRef(false);
 
@@ -1238,6 +1359,21 @@ export default function App() {
       if (settings.enabled) void refreshAiConnection(settings.provider);
     }).catch(() => undefined);
   }, []);
+  useEffect(() => {
+    void (async () => {
+      const [connection, sync] = await Promise.all([getUnframedConnection(), getArticleSyncSettings()]);
+      setUnframedConnection(connection);
+      setArticleSync(sync);
+      if (connection.token) await pushPendingDigest();
+    })();
+  }, []);
+
+  async function pushPendingDigest() {
+    const pending = await getPendingDigest();
+    if (!pending) return;
+    const result = await postDigest(digestPayloadFromPending(pending));
+    if (result.ok) await confirmSync(pending.weekOf);
+  }
 
   async function refreshAiConnection(provider = aiSettings.provider): Promise<AiConnectionStatus> {
     let status: AiConnectionStatus;
@@ -1359,16 +1495,27 @@ export default function App() {
   async function saveCurrentAnalysis() {
     if (!analysis) return;
     try {
-      const result = await saveAnalysis(toSavedAnalysis(analysis), () => window.confirm("You already have 50 saved analyses. Delete the oldest item to make room?"));
+      const item = toSavedAnalysis(analysis);
+      const result = await saveAnalysis(item, () => window.confirm("You already have 50 saved analyses. Delete the oldest item to make room?"));
       if (result.saved) {
         setSaved(await getSavedAnalyses());
         setNotice("Analysis saved on this device.");
+        void syncSavedArticleIfEnabled(item);
       } else {
         setNotice("Analysis was not saved.");
       }
     } catch {
       setError("The analysis could not be saved.");
     }
+  }
+
+  async function saveUnframedTokenSetting(token: string | null) {
+    setUnframedConnection(await saveUnframedToken(token));
+    if (token) await pushPendingDigest();
+  }
+
+  async function saveArticleSyncSetting(settings: ArticleSyncSettings) {
+    setArticleSync(await saveArticleSyncSettings(settings));
   }
 
   async function removeSaved(id: string) {
@@ -1411,11 +1558,12 @@ export default function App() {
             {activeView === "analysis" && (analysis
               ? <AnalysisView analysis={analysis} aiEnabled={aiSettings.enabled} aiConnection={aiConnection} canReanalyze={Boolean(sourcePage)} onSaveAnalysis={saveCurrentAnalysis} onOpenAiSettings={() => openAiSettings(false)} onRetryAi={() => { if (sourcePage) void analyze(Promise.resolve(sourcePage)); }} onShowSource={(text) => { void showSourcePassage(text); }} onNewAnalysis={() => { setAnalysis(null); setSourcePage(null); setAnalysisTrace([]); setError(null); setNotice(null); }} trace={analysisTrace} />
               : <StartView loading={loading} onAnalyzePage={runPageAnalysis} onAnalyzeUrl={runUrlAnalysis} onAnalyzeText={runManualAnalysis} />)}
-            {activeView === "saved" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setSourcePage(null); setAnalysisTrace([]); setActiveView("analysis"); }} onDelete={removeSaved} onClear={clearHistory} />}
+            {activeView === "saved" && <HistoryView saved={saved} onOpen={(next) => { setAnalysis(next); setSourcePage(null); setAnalysisTrace([]); setActiveView("analysis"); }} onDelete={removeSaved} onClear={clearHistory} onOpenSync={() => setUnframedSyncOpen(true)} />}
           </section>
         )}
       </div>
       <AiSettingsDialog open={aiSettingsOpen} settings={aiSettings} connection={aiConnection} suggestEnabled={suggestAiEnabled} onClose={() => { setAiSettingsOpen(false); setSuggestAiEnabled(false); }} onConnect={connectAi} onTest={refreshAiConnection} onSave={applyAiSettings} />
+      <UnframedSyncDialog open={unframedSyncOpen} connection={unframedConnection} articleSync={articleSync} onClose={() => setUnframedSyncOpen(false)} onSaveToken={saveUnframedTokenSetting} onSaveArticleSync={saveArticleSyncSetting} />
     </main>
   );
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getAiSettings, migrateSavedAnalysis } from "./storage";
+import { getAiSettings, getArticleSyncSettings, getUnframedConnection, migrateSavedAnalysis, saveUnframedToken } from "./storage";
 import type { SavedAnalysis } from "../types";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -120,5 +120,27 @@ describe("AI settings migration", () => {
     vi.stubGlobal("chrome", { storage: { local: { get, set: vi.fn() } } });
 
     await expect(getAiSettings()).resolves.toMatchObject({ enabled: true, provider: "claude" });
+  });
+});
+
+describe("Unframed connection and article sync settings", () => {
+  it("defaults to disconnected with sync off", async () => {
+    const get = vi.fn().mockResolvedValue({});
+    vi.stubGlobal("chrome", { storage: { local: { get, set: vi.fn() } } });
+
+    await expect(getUnframedConnection()).resolves.toEqual({ token: null, connectedAt: null });
+    await expect(getArticleSyncSettings()).resolves.toEqual({ enabled: false, consentedAt: null });
+  });
+
+  it("stores a trimmed token with a connected timestamp, and clears both on disconnect", async () => {
+    const set = vi.fn();
+    vi.stubGlobal("chrome", { storage: { local: { get: vi.fn().mockResolvedValue({}), set } } });
+
+    const connected = await saveUnframedToken("  ellu_abc123  ");
+    expect(connected.token).toBe("ellu_abc123");
+    expect(connected.connectedAt).not.toBeNull();
+
+    const disconnected = await saveUnframedToken(null);
+    expect(disconnected).toEqual({ token: null, connectedAt: null });
   });
 });

@@ -385,6 +385,29 @@ export interface SavedAnalysis {
   analysis: Analysis;
 }
 
+/** Token-based connection to an Unframed account, used to authenticate direct sync requests (digest, saved articles). */
+export interface UnframedConnection {
+  token: string | null;
+  connectedAt: string | null;
+}
+
+/** Per-article sync is opt-in and separate from the account connection above, since it sends article-level content rather than an aggregate. */
+export interface ArticleSyncSettings {
+  enabled: boolean;
+  consentedAt: string | null;
+}
+
+/** Body POSTed to Unframed's /api/saved-articles when a saved article analysis syncs. */
+export interface SavedArticlePayload {
+  articleUrl: string;
+  articleTitle: string;
+  savedAt: string;
+  biasScores: BackendBiasAnalysis["scores"];
+  perspectives: ArticleSource[];
+  framingNotes: AnalysisFinding[];
+  summary: string;
+}
+
 export interface FeedbackLog {
   id: string;
   analysisId: string;

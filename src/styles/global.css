@@ -1228,6 +1228,13 @@ blockquote {
   gap: 12px;
 }
 
+.history-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .history-list {
   border-top: 1px solid var(--line);
 }

@@ -1,9 +1,11 @@
-import type { AiSettings, Analysis, AnalysisFinding, ArticleAnalysis, ArticleSource, AttributionEvent, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, OutletProfile, SavedAnalysis, SourceEvidence } from "../types";
+import type { AiSettings, Analysis, AnalysisFinding, ArticleAnalysis, ArticleSource, ArticleSyncSettings, AttributionEvent, BackendBiasAnalysis, BiasMetric, ConfidenceLabel, EvidenceItem, FeedbackLog, OutletProfile, SavedAnalysis, SourceEvidence, UnframedConnection } from "../types";
 import { validateSourceDisplayName } from "./sources";
 
 const HISTORY_KEY = "ellipsis.savedAnalyses";
 const FEEDBACK_KEY = "ellipsis.feedbackLogs";
 const AI_SETTINGS_KEY = "ellipsis.aiSettings";
+const UNFRAMED_CONNECTION_KEY = "ellipsis.unframedConnection";
+const ARTICLE_SYNC_KEY = "ellipsis.articleSyncSettings";
 const LEGACY_STORAGE_PREFIX = ["un", "framed"].join("");
 const LEGACY_HISTORY_KEY = `${LEGACY_STORAGE_PREFIX}.savedAnalyses`;
 const LEGACY_FEEDBACK_KEY = `${LEGACY_STORAGE_PREFIX}.feedbackLogs`;
@@ -321,5 +323,36 @@ export async function saveAiSettings(settings: AiSettings): Promise<AiSettings> 
     connectionVerifiedAt: settings.connectionVerifiedAt || null
   };
   await writeValue(AI_SETTINGS_KEY, value);
+  return value;
+}
+
+export async function getUnframedConnection(): Promise<UnframedConnection> {
+  const value = await readValue<Partial<UnframedConnection> | null>(UNFRAMED_CONNECTION_KEY, null);
+  return {
+    token: typeof value?.token === "string" && value.token ? value.token : null,
+    connectedAt: typeof value?.connectedAt === "string" ? value.connectedAt : null
+  };
+}
+
+export async function saveUnframedToken(token: string | null): Promise<UnframedConnection> {
+  const value: UnframedConnection = {
+    token: token && token.trim() ? token.trim() : null,
+    connectedAt: token && token.trim() ? new Date().toISOString() : null
+  };
+  await writeValue(UNFRAMED_CONNECTION_KEY, value);
+  return value;
+}
+
+export async function getArticleSyncSettings(): Promise<ArticleSyncSettings> {
+  const value = await readValue<Partial<ArticleSyncSettings> | null>(ARTICLE_SYNC_KEY, null);
+  return {
+    enabled: value?.enabled === true,
+    consentedAt: typeof value?.consentedAt === "string" ? value.consentedAt : null
+  };
+}
+
+export async function saveArticleSyncSettings(settings: ArticleSyncSettings): Promise<ArticleSyncSettings> {
+  const value: ArticleSyncSettings = { enabled: settings.enabled === true, consentedAt: settings.consentedAt || null };
+  await writeValue(ARTICLE_SYNC_KEY, value);
   return value;
 }
